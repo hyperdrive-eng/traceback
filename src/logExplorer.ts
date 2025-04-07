@@ -126,8 +126,8 @@ export class LogExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
 
   constructor(context: vscode.ExtensionContext) {
     this.context = context;
-    vscode.commands.registerCommand('log-visualizer.openLog', (log: LogEntry) => this.openLog(log));
-    vscode.commands.registerCommand('log-visualizer.toggleSort', () => this.toggleSort());
+    vscode.commands.registerCommand('traceback.openLog', (log: LogEntry) => this.openLog(log));
+    vscode.commands.registerCommand('traceback.toggleSort', () => this.toggleSort());
   }
   
   /**
@@ -489,7 +489,7 @@ export class LogExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
 
   private toggleSort(): void {
     this.sortByTime = !this.sortByTime;
-    vscode.commands.executeCommand('setContext', 'log-visualizer.timeSort', this.sortByTime);
+    vscode.commands.executeCommand('setContext', 'traceback.timeSort', this.sortByTime);
     vscode.window.showInformationMessage(
       this.sortByTime ? 'Showing chronological logs (grouped by consecutive spans)' : 'Showing logs grouped by spans'
     );
@@ -747,7 +747,7 @@ export class LogTreeItem extends vscode.TreeItem {
     this.tooltip = tooltip;
     
     this.command = {
-      command: 'log-visualizer.openLog',
+      command: 'traceback.openLog',
       title: 'Open Log',
       arguments: [log],
     };

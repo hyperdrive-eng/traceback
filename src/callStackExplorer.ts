@@ -186,7 +186,7 @@ export function registerCallStackExplorer(context: vscode.ExtensionContext): Cal
   
   // Register command to copy span property value
   const copySpanValueCommand = vscode.commands.registerCommand(
-    'log-visualizer.copySpanValue',
+    'traceback.copySpanValue',
     (item: SpanDetailItem) => {
       vscode.env.clipboard.writeText(item.value);
       vscode.window.showInformationMessage('Value copied to clipboard');

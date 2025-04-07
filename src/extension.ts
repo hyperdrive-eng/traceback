@@ -6,30 +6,30 @@ import { registerCallStackExplorer } from "./callStackExplorer";
 import { PinnedLogsProvider } from "./pinnedLogsProvider";
 
 export function activate(context: vscode.ExtensionContext) {
-  console.log("Log Visualizer is now active");
+  console.log("TraceBack is now active");
 
   // Add status bar item
   const statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left);
-  statusBarItem.command = "log-visualizer.setLogPath";
+  statusBarItem.command = "traceback.setLogPath";
   statusBarItem.tooltip = "Click to change log file path";
   
   // Add status bar item for Jaeger trace loading
   const jaegerStatusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left);
-  jaegerStatusBarItem.command = "log-visualizer.loadJaegerTrace";
+  jaegerStatusBarItem.command = "traceback.loadJaegerTrace";
   jaegerStatusBarItem.text = "$(globe) Load Jaeger Trace";
   jaegerStatusBarItem.tooltip = "Click to load a Jaeger trace from URL";
   jaegerStatusBarItem.show();
   
   // Add status bar item for Axiom trace loading
   const axiomStatusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left);
-  axiomStatusBarItem.command = "log-visualizer.loadAxiomTrace";
+  axiomStatusBarItem.command = "traceback.loadAxiomTrace";
   axiomStatusBarItem.text = "$(server) Load Axiom Trace";
   axiomStatusBarItem.tooltip = "Click to load an Axiom trace by ID";
   axiomStatusBarItem.show();
 
   // Add a new status bar item for repo path
   const repoStatusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left);
-  repoStatusBarItem.command = "log-visualizer.setRepoPath";
+  repoStatusBarItem.command = "traceback.setRepoPath";
   repoStatusBarItem.tooltip = "Click to change repository root path";
 
   // Update all status bars
@@ -91,23 +91,23 @@ export function activate(context: vscode.ExtensionContext) {
   logExplorerProvider.setCallStackExplorer(callStackExplorerProvider);
 
   // Register commands
-  const refreshCommand = vscode.commands.registerCommand("log-visualizer.refreshLogs", () => {
+  const refreshCommand = vscode.commands.registerCommand("traceback.refreshLogs", () => {
     logExplorerProvider.refresh();
   });
 
-  const showLogsCommand = vscode.commands.registerCommand("log-visualizer.showLogs", () => {
-    vscode.commands.executeCommand("workbench.view.extension.log-explorer");
+  const showLogsCommand = vscode.commands.registerCommand("traceback.showLogs", () => {
+    vscode.commands.executeCommand("workbench.view.extension.traceback");
     updateStatusBars();
     logExplorerProvider.refresh();
   });
 
-  const filterCommand = vscode.commands.registerCommand("log-visualizer.filterLogs", () => {
+  const filterCommand = vscode.commands.registerCommand("traceback.filterLogs", () => {
     logExplorerProvider.selectLogLevels();
   });
 
   // Command to set log file path
   const setLogPathCommand = vscode.commands.registerCommand(
-    "log-visualizer.setLogPath",
+    "traceback.setLogPath",
     async () => {
       // Use file picker instead of input box
       const options: vscode.OpenDialogOptions = {
@@ -133,7 +133,7 @@ export function activate(context: vscode.ExtensionContext) {
 
   // Command to set repository path
   const setRepoPathCommand = vscode.commands.registerCommand(
-    "log-visualizer.setRepoPath",
+    "traceback.setRepoPath",
     async () => {
       const options: vscode.OpenDialogOptions = {
         canSelectFiles: false,
@@ -163,7 +163,7 @@ export function activate(context: vscode.ExtensionContext) {
 
   // Command to reset log file path
   const resetLogPathCommand = vscode.commands.registerCommand(
-    "log-visualizer.resetLogPath",
+    "traceback.resetLogPath",
     async () => {
       await context.globalState.update("logFilePath", undefined);
       await context.globalState.update("jaegerTraceId", undefined); // Also clear Jaeger trace ID
@@ -174,7 +174,7 @@ export function activate(context: vscode.ExtensionContext) {
 
   // Command to clear the views
   const clearExplorersCommand = vscode.commands.registerCommand(
-    "log-visualizer.clearExplorers",
+    "traceback.clearExplorers",
     () => {
       variableExplorerProvider.setLog(undefined);
       callStackExplorerProvider.setLogEntry(undefined);
@@ -183,7 +183,7 @@ export function activate(context: vscode.ExtensionContext) {
   
   // Command to load a Jaeger trace from a URL
   const loadJaegerTraceCommand = vscode.commands.registerCommand(
-    "log-visualizer.loadJaegerTrace",
+    "traceback.loadJaegerTrace",
     async () => {
       // First, ask for Jaeger endpoint if not set
       let jaegerEndpoint = context.globalState.get<string>("jaegerEndpoint");
@@ -236,7 +236,7 @@ export function activate(context: vscode.ExtensionContext) {
   
   // Command to change Jaeger endpoint
   const setJaegerEndpointCommand = vscode.commands.registerCommand(
-    "log-visualizer.setJaegerEndpoint",
+    "traceback.setJaegerEndpoint",
     async () => {
       const currentEndpoint = context.globalState.get<string>("jaegerEndpoint") || "http://localhost:8080/jaeger/ui/api/traces";
       
@@ -270,7 +270,7 @@ export function activate(context: vscode.ExtensionContext) {
 
   // Command to store Axiom API token securely
   const storeAxiomTokenCommand = vscode.commands.registerCommand(
-    "log-visualizer.storeAxiomToken",
+    "traceback.storeAxiomToken",
     async (token: string) => {
       await context.secrets.store("axiom-token", token);
     }
@@ -278,7 +278,7 @@ export function activate(context: vscode.ExtensionContext) {
   
   // Command to get stored Axiom API token
   const getAxiomTokenCommand = vscode.commands.registerCommand(
-    "log-visualizer.getAxiomToken",
+    "traceback.getAxiomToken",
     async () => {
       return context.secrets.get("axiom-token");
     }
@@ -286,7 +286,7 @@ export function activate(context: vscode.ExtensionContext) {
   
   // Command to get Axiom dataset name
   const getAxiomDatasetCommand = vscode.commands.registerCommand(
-    "log-visualizer.getAxiomDataset",
+    "traceback.getAxiomDataset",
     () => {
       return context.globalState.get<string>("axiomDataset") || "otel-demo-traces";
     }
@@ -294,7 +294,7 @@ export function activate(context: vscode.ExtensionContext) {
   
   // Command to load an Axiom trace
   const loadAxiomTraceCommand = vscode.commands.registerCommand(
-    "log-visualizer.loadAxiomTrace",
+    "traceback.loadAxiomTrace",
     async () => {
       // Ask for the trace ID
       const traceId = await vscode.window.showInputBox({
@@ -326,7 +326,7 @@ export function activate(context: vscode.ExtensionContext) {
   
   // Command to set Axiom dataset name
   const setAxiomDatasetCommand = vscode.commands.registerCommand(
-    "log-visualizer.setAxiomDataset",
+    "traceback.setAxiomDataset",
     async () => {
       const currentDataset = context.globalState.get<string>("axiomDataset") || "otel-demo-traces";
       
@@ -372,19 +372,19 @@ export function activate(context: vscode.ExtensionContext) {
     jaegerStatusBarItem,
     axiomStatusBarItem,
     repoStatusBarItem,
-    vscode.commands.registerCommand('log-visualizer.pinLog', (item: LogTreeItem) => {
+    vscode.commands.registerCommand('traceback.pinLog', (item: LogTreeItem) => {
       const log = item.getLogEntry();
       pinnedLogsProvider.pinLog(log);
       logExplorerProvider.refresh();
       pinnedLogsProvider.refresh();
     }),
-    vscode.commands.registerCommand('log-visualizer.unpinLog', (item: LogTreeItem) => {
+    vscode.commands.registerCommand('traceback.unpinLog', (item: LogTreeItem) => {
       const log = item.getLogEntry();
       pinnedLogsProvider.unpinLog(log);
       logExplorerProvider.refresh();
       pinnedLogsProvider.refresh();
     }),
-    vscode.commands.registerCommand('log-visualizer.clearPins', () => {
+    vscode.commands.registerCommand('traceback.clearPins', () => {
       pinnedLogsProvider.clearPins();
       logExplorerProvider.refresh();
       pinnedLogsProvider.refresh();
