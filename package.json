@@ -1,7 +1,7 @@
 {
   "name": "traceback",
   "displayName": "TraceBack",
-  "description": "Visualize structured logs from Rust tracing library",
+  "description": "A VS Code extension that brings telemetry data (traces, logs, and metrics) into your code.",
   "version": "0.3.0",
   "engines": {
     "vscode": "^1.60.0"
