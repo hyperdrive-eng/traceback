@@ -34,14 +34,14 @@ export class VariableItem extends vscode.TreeItem {
     // Add ability to show variable in editor and also allow copy
     if (itemType === 'property' || itemType === 'variable' || itemType === 'arrayItem') {
       this.command = {
-        command: 'log-visualizer.showVariableInEditor',
+        command: 'traceback.showVariableInEditor',
         title: 'Show Variable in Editor',
         arguments: [label, value],
       };
     } else {
       // Default to copy for non-variable items
       this.command = {
-        command: 'log-visualizer.copyVariableValue',
+        command: 'traceback.copyVariableValue',
         title: 'Copy Value',
         arguments: [value],
       };
@@ -393,7 +393,7 @@ export function registerVariableExplorer(context: vscode.ExtensionContext): Vari
   
   // Register a command to copy variable values
   const copyValueCommand = vscode.commands.registerCommand(
-    'log-visualizer.copyVariableValue',
+    'traceback.copyVariableValue',
     (value: any) => {
       const stringValue = typeof value === 'object' 
         ? JSON.stringify(value, null, 2)
@@ -406,7 +406,7 @@ export function registerVariableExplorer(context: vscode.ExtensionContext): Vari
   
   // Register a command to show variable in editor
   const showVariableCommand = vscode.commands.registerCommand(
-    'log-visualizer.showVariableInEditor',
+    'traceback.showVariableInEditor',
     (variableName: string, variableValue: any) => {
       variableExplorerProvider.showVariableInEditor(variableName, variableValue);
     }

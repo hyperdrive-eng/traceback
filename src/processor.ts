@@ -23,7 +23,7 @@ export async function loadAxiomTrace(traceId: string): Promise<LogEntry[]> {
         
         if (!token) {
           // Try to get from secrets storage
-          token = await vscode.commands.executeCommand('log-visualizer.getAxiomToken');
+          token = await vscode.commands.executeCommand('traceback.getAxiomToken');
           
           // If still no token, prompt the user
           if (!token) {
@@ -41,7 +41,7 @@ export async function loadAxiomTrace(traceId: string): Promise<LogEntry[]> {
         }
 
         // Store the token in extension secrets storage
-        await vscode.commands.executeCommand('log-visualizer.storeAxiomToken', token);
+        await vscode.commands.executeCommand('traceback.storeAxiomToken', token);
 
         // Get the dataset name from settings
         const dataset = await getDatasetName();
@@ -596,7 +596,7 @@ async function findSourceFiles(dir: string): Promise<string[]> {
  */
 async function getDatasetName(): Promise<string> {
   // Get from extension context global state
-  const dataset = await vscode.commands.executeCommand<string>('log-visualizer.getAxiomDataset');
+  const dataset = await vscode.commands.executeCommand<string>('traceback.getAxiomDataset');
   
   // Fallback to default if not set
   return dataset || 'otel-demo-traces';

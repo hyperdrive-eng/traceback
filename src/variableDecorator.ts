@@ -190,7 +190,7 @@ export class VariableDecorator {
           (timestamp ? `**Timestamp:** ${timestamp}\n` : '') +
           (allRanges && allRanges.length > 1 ? `*${allRanges.length} occurrences found in this file*\n` : '') +
           `\n*From log in: ${this.currentLog?.jsonPayload.target || 'unknown location'}*\n\n` +
-          `[Show in Variables](command:log-visualizer.showLogs)`
+          `[Show in Variables](command:traceback.showLogs)`
         );
         // Enable command links in the markdown
         markdown.isTrusted = true;

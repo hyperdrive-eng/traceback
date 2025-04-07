@@ -1,7 +1,7 @@
 {
-  "name": "log-visualizer",
-  "displayName": "Rust Log Visualizer",
-  "description": "Visualize structured logs from Rust tracing library",
+  "name": "traceback",
+  "displayName": "TraceBack",
+  "description": "A VS Code extension that brings telemetry data (traces, logs, and metrics) into your code.",
   "version": "0.3.0",
   "engines": {
     "vscode": "^1.60.0"
@@ -15,86 +15,86 @@
     "onView:logVariableExplorer",
     "onView:callStackExplorer",
     "onView:pinnedLogs",
-    "onCommand:log-visualizer.showLogs",
-    "onCommand:log-visualizer.refreshLogs",
-    "onCommand:log-visualizer.createSampleLogs",
-    "onCommand:log-visualizer.loadJaegerTrace",
-    "onCommand:log-visualizer.setJaegerEndpoint",
-    "onCommand:log-visualizer.loadAxiomTrace",
-    "onCommand:log-visualizer.setAxiomDataset"
+    "onCommand:traceback.showLogs",
+    "onCommand:traceback.refreshLogs",
+    "onCommand:traceback.createSampleLogs",
+    "onCommand:traceback.loadJaegerTrace",
+    "onCommand:traceback.setJaegerEndpoint",
+    "onCommand:traceback.loadAxiomTrace",
+    "onCommand:traceback.setAxiomDataset"
   ],
   "main": "./out/extension.js",
   "contributes": {
     "configuration": {
-      "title": "Log Visualizer",
+      "title": "TraceBack",
       "properties": {}
     },
     "commands": [
       {
-        "command": "log-visualizer.filterLogs",
+        "command": "traceback.filterLogs",
         "title": "Filter Log Levels",
         "icon": "$(filter)"
       },
       {
-        "command": "log-visualizer.toggleSort",
+        "command": "traceback.toggleSort",
         "title": "Toggle Sort Mode",
         "icon": "$(sort-precedence)"
       },
       {
-        "command": "log-visualizer.refreshLogs",
+        "command": "traceback.refreshLogs",
         "title": "Refresh Logs",
         "icon": "$(refresh)"
       },
       {
-        "command": "log-visualizer.setRepoPath",
+        "command": "traceback.setRepoPath",
         "title": "Set Repository Root",
         "icon": "$(folder)"
       },
       {
-        "command": "log-visualizer.clearExplorers",
+        "command": "traceback.clearExplorers",
         "title": "Clear Views",
         "icon": "$(clear-all)"
       },
       {
-        "command": "log-visualizer.pinLog",
+        "command": "traceback.pinLog",
         "title": "Pin Log",
         "icon": "$(pin)"
       },
       {
-        "command": "log-visualizer.unpinLog",
+        "command": "traceback.unpinLog",
         "title": "Unpin Log",
         "icon": "$(pinned)"
       },
       {
-        "command": "log-visualizer.clearPins",
+        "command": "traceback.clearPins",
         "title": "Clear All Pins",
         "icon": "$(clear-all)"
       },
       {
-        "command": "log-visualizer.copyVariableValue",
+        "command": "traceback.copyVariableValue",
         "title": "Copy Variable Value"
       },
       {
-        "command": "log-visualizer.copySpanValue",
+        "command": "traceback.copySpanValue",
         "title": "Copy Span Value"
       },
       {
-        "command": "log-visualizer.loadJaegerTrace",
+        "command": "traceback.loadJaegerTrace",
         "title": "Load Jaeger Trace",
         "icon": "$(globe)"
       },
       {
-        "command": "log-visualizer.setJaegerEndpoint",
+        "command": "traceback.setJaegerEndpoint",
         "title": "Set Jaeger API Endpoint",
         "icon": "$(gear)"
       },
       {
-        "command": "log-visualizer.loadAxiomTrace",
+        "command": "traceback.loadAxiomTrace",
         "title": "Load Axiom Trace",
         "icon": "$(server)"
       },
       {
-        "command": "log-visualizer.setAxiomDataset",
+        "command": "traceback.setAxiomDataset",
         "title": "Set Axiom Dataset",
         "icon": "$(gear)"
       }
@@ -102,14 +102,14 @@
     "viewsContainers": {
       "activitybar": [
         {
-          "id": "log-visualizer",
-          "title": "Log Visualizer",
+          "id": "traceback",
+          "title": "TraceBack",
           "icon": "resources/log-icon.svg"
         }
       ]
     },
     "views": {
-      "log-visualizer": [
+      "traceback": [
         {
           "id": "logExplorer",
           "name": "Logs",
@@ -136,59 +136,59 @@
     "menus": {
       "view/title": [
         {
-          "command": "log-visualizer.filterLogs",
+          "command": "traceback.filterLogs",
           "when": "view == logExplorer",
           "group": "navigation@1"
         },
         {
-          "command": "log-visualizer.toggleSort",
+          "command": "traceback.toggleSort",
           "when": "view == logExplorer",
           "group": "navigation@2"
         },
         {
-          "command": "log-visualizer.refreshLogs",
+          "command": "traceback.refreshLogs",
           "when": "view == logExplorer",
           "group": "navigation@3"
         },
         {
-          "command": "log-visualizer.loadJaegerTrace",
+          "command": "traceback.loadJaegerTrace",
           "when": "view == logExplorer",
           "group": "navigation@4"
         },
         {
-          "command": "log-visualizer.loadAxiomTrace",
+          "command": "traceback.loadAxiomTrace",
           "when": "view == logExplorer",
           "group": "navigation@5"
         },
         {
-          "command": "log-visualizer.clearExplorers",
+          "command": "traceback.clearExplorers",
           "when": "view == logVariableExplorer",
           "group": "navigation@1"
         },
         {
-          "command": "log-visualizer.clearExplorers",
+          "command": "traceback.clearExplorers",
           "when": "view == callStackExplorer",
           "group": "navigation@1"
         },
         {
-          "command": "log-visualizer.clearPins",
+          "command": "traceback.clearPins",
           "when": "view == pinnedLogs",
           "group": "navigation"
         }
       ],
       "view/item/context": [
         {
-          "command": "log-visualizer.copySpanValue",
+          "command": "traceback.copySpanValue",
           "when": "viewItem == spanDetail",
           "group": "inline"
         },
         {
-          "command": "log-visualizer.pinLog",
+          "command": "traceback.pinLog",
           "when": "view == logExplorer && viewItem == unpinned",
           "group": "inline@1"
         },
         {
-          "command": "log-visualizer.unpinLog",
+          "command": "traceback.unpinLog",
           "when": "view == logExplorer && viewItem == pinned || view == pinnedLogs && viewItem == pinned",
           "group": "inline@1"
         }
