@@ -3,6 +3,8 @@ name: Build and Release VSIX
 on:
   workflow_dispatch: # Trigger the workflow manually
     inputs:
+      # Version MUST be in the format v*.*.*
+      # Version MUST NOT already exist, else the workflow will fail
       version:
         description: 'Version number (v*.*.*)' 
         required: true
