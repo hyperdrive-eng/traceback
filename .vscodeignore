@@ -9,3 +9,6 @@ package-lock.json
 **/*.map
 **/*.vsix
 .eslintrc*
+webpack.config.js
+out/**
+!dist/**
