@@ -10,6 +10,10 @@ on:
         required: true
         type: string
 
+permissions:
+  # Allows the workflow to create releases, upload release assets, and manage repository contents
+  contents: write 
+  
 jobs:
   build:
     runs-on: ubuntu-latest
