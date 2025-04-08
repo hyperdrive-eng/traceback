@@ -1,0 +1,14 @@
+.vscode/**
+.github/**
+node_modules/**
+src/**
+.gitignore
+tsconfig.json
+package-lock.json
+**/*.ts
+**/*.map
+**/*.vsix
+.eslintrc*
+webpack.config.js
+out/**
+!dist/**
