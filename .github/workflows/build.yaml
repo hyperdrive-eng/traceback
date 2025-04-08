@@ -6,7 +6,6 @@ on:
       version:
         description: 'Version number (v*.*.*)' 
         required: true
-        default: 'v0.0.1'
         type: string
 
 jobs:
@@ -35,4 +34,3 @@ jobs:
         with:
           files: "*.vsix"
           tag_name: ${{ github.event.inputs.version }}
-          
