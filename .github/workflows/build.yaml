@@ -1,0 +1,38 @@
+name: Build and Release VSIX
+
+on:
+  workflow_dispatch: # Trigger the workflow manually
+    inputs:
+      version:
+        description: 'Version number (v*.*.*)' 
+        required: true
+        default: 'v0.0.1'
+        type: string
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      # Documentation: https://github.com/actions/checkout
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      # Documentation: https://github.com/actions/setup-node
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          
+      - name: Install dependencies
+        run: npm install
+        
+      - name: Package Extension
+        run: npm run package
+        
+      # Documentation: https://github.com/softprops/action-gh-release
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: "*.vsix"
+          tag_name: ${{ github.event.inputs.version }}
+          
