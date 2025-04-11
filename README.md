@@ -5,8 +5,8 @@ A VS Code extension that brings telemetry data (traces, logs, and metrics) into 
 ## Get started
 
 1. Install extension
-  1. [Download](https://github.com/hyperdrive-eng/traceback/releases) latest `.vsix` 
-  1. Install VSIX
+    1. [Download](https://github.com/hyperdrive-eng/traceback/releases) latest `.vsix` 
+    1. Install VSIX
 1. Open settings
 1. Add a data source (local file, public URL, copy/paste, Axiom.co)
 1. Select a log from the sidebar
