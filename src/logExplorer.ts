@@ -431,7 +431,7 @@ export class LogExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
       // Clear any existing decorations
       clearDecorations();
       
-      // Show progress indicator
+      // Show progress indicator for initial analysis
       await vscode.window.withProgress({
         location: vscode.ProgressLocation.Notification,
         title: 'Processing log...',
@@ -487,42 +487,7 @@ export class LogExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
         
         const { file: sourceFile, line: targetLine } = sourceLocation;
         
-        // Find potential callers if we have the location
-        if (this.callStackExplorerProvider) {
-          // Check for cached call stack analysis
-          if (!log.callStackCache) {
-            progress.report({ message: 'Analyzing call stack...' });
-            
-            const potentialCallers = await this.callStackExplorerProvider.findPotentialCallers(
-              path.join(repoPath, sourceFile),
-              targetLine
-            );
-            
-            if (potentialCallers && potentialCallers.length > 0) {
-              await this.callStackExplorerProvider.analyzeCallers(
-                logMessage,
-                analysis.staticSearchString,
-                this.logs,
-                potentialCallers
-              );
-
-              // Cache the results after analysis
-              if (this.callStackExplorerProvider.getCallStackAnalysis()) {
-                log.callStackCache = {
-                  potentialCallers: this.callStackExplorerProvider.getCallStackAnalysis()!.rankedCallers,
-                  lastUpdated: new Date().toISOString()
-                };
-              }
-            }
-          } else {
-            // Use cached call stack analysis
-            this.callStackExplorerProvider.setCallStackAnalysisFromCache(log.callStackCache.potentialCallers);
-          }
-        }
-        
         // Open the file and highlight the relevant line
-        progress.report({ message: 'Opening source file...' });
-        
         const fullPath = path.join(repoPath, sourceFile);
         if (!fs.existsSync(fullPath)) {
           vscode.window.showErrorMessage(`Could not find ${sourceFile} in the repository`);
@@ -543,11 +508,66 @@ export class LogExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
           const lineText = document.lineAt(targetLine).text;
           this.decorateVariables(editor, targetLine, lineText, analysis);
         }
-        
+
+        // Start call stack analysis in the background
+        if (this.callStackExplorerProvider) {
+          this.analyzeCallStackInBackground(log, sourceFile, targetLine, logMessage, analysis?.staticSearchString);
+        }
       });
     } catch (error) {
       console.error('Error in openLog:', error);
       vscode.window.showErrorMessage(`Error opening log: ${error}`);
+    }
+  }
+
+  // New method to handle background call stack analysis
+  private async analyzeCallStackInBackground(
+    log: LogEntry,
+    sourceFile: string,
+    targetLine: number,
+    logMessage: string,
+    staticSearchString?: string
+  ): Promise<void> {
+    try {
+      // Check for cached call stack analysis
+      if (log.callStackCache) {
+        this.callStackExplorerProvider?.setCallStackAnalysisFromCache(log.callStackCache.potentialCallers);
+        return;
+      }
+
+      // Show a subtle progress indication
+      await vscode.window.withProgress({
+        location: vscode.ProgressLocation.Window,
+        title: '$(sync~spin) Analyzing call stack...'
+      }, async () => {
+        const repoPath = this.context.globalState.get<string>('repoPath');
+        if (!repoPath || !this.callStackExplorerProvider) return;
+
+        const potentialCallers = await this.callStackExplorerProvider.findPotentialCallers(
+          path.join(repoPath, sourceFile),
+          targetLine
+        );
+        
+        if (potentialCallers && potentialCallers.length > 0 && staticSearchString) {
+          await this.callStackExplorerProvider.analyzeCallers(
+            logMessage,
+            staticSearchString,
+            this.logs,
+            potentialCallers
+          );
+
+          // Cache the results after analysis
+          if (this.callStackExplorerProvider.getCallStackAnalysis()) {
+            log.callStackCache = {
+              potentialCallers: this.callStackExplorerProvider.getCallStackAnalysis()!.rankedCallers,
+              lastUpdated: new Date().toISOString()
+            };
+          }
+        }
+      });
+    } catch (error) {
+      // Log error but don't show to user since this is background processing
+      console.error('Error in background call stack analysis:', error);
     }
   }
   
