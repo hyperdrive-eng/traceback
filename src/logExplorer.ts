@@ -5,7 +5,7 @@ import dayjs from 'dayjs';
 import { findCodeLocation, loadLogs } from './processor';
 import { logLineDecorationType, variableValueDecorationType, clearDecorations } from './decorations';
 import { PinnedLogsProvider } from './pinnedLogsProvider';
-import { ClaudeService } from './claudeService';
+import { ClaudeService, LLMLogAnalysis } from './claudeService';
 
 // Core interfaces for log structure
 export interface Span {
@@ -109,6 +109,12 @@ export interface LogEntry {
   // Unified fields for display purposes
   message?: string;
   target?: string;
+
+  // Add Claude analysis results
+  claudeAnalysis?: {
+    staticSearchString: string;
+    variables: Record<string, any>;
+  };
 }
 
 export class LogExplorerProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
@@ -378,16 +384,6 @@ export class LogExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
     try {
       clearDecorations();
 
-      // Update the variable explorer with the selected log
-      if (this.variableExplorerProvider) {
-        this.variableExplorerProvider.setLog(log);
-      }
-
-      // Update the call stack explorer with the selected log
-      if (this.callStackExplorerProvider) {
-        this.callStackExplorerProvider.setLogEntry(log);
-      }
-
       // Extract log message for Claude analysis
       let logMessage = '';
       if (log.jaegerSpan) {
@@ -405,10 +401,31 @@ export class LogExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
       }
 
       // Try to analyze the log with Claude
+      let analysis: LLMLogAnalysis;
       try {
-        const analysis = await this.claudeService.analyzeLog(logMessage);
+        analysis = await this.claudeService.analyzeLog(logMessage);
+        // Store the analysis in the log entry
+        log.claudeAnalysis = analysis;
+      } catch (error) {
+        console.error('Error analyzing log with Claude:', error);
+        analysis = {
+          staticSearchString: '',
+          variables: {}
+        };
+      }
 
-      // Use Claude's static search string to help find the source location
+      // Update the variable explorer with the selected log
+      if (this.variableExplorerProvider) {
+        this.variableExplorerProvider.setLog(log);
+      }
+
+      // Update the call stack explorer with the selected log
+      if (this.callStackExplorerProvider) {
+        this.callStackExplorerProvider.setLogEntry(log);
+      }
+
+      // Try to analyze the log with Claude
+      try {
         const repoPath = this.context.globalState.get<string>('repoPath');
         if (!repoPath) {
           vscode.window.showErrorMessage('Repository root path is not set.');

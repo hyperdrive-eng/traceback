@@ -57,7 +57,7 @@ export class ClaudeService {
                     },
                     staticSearchString: {
                         type: "string",
-                        description: "A substring from the log that would help locate the source code, excluding dynamic values"
+                        description: "The static prefix or template part of the log message that would be in the source code"
                     },
                     variables: {
                         type: "object",
@@ -73,16 +73,20 @@ export class ClaudeService {
             messages: [{
                 role: 'user',
                 content: `Analyze this log message and extract:
-1. A static search string that would help locate the source code that generated this log (exclude dynamic values)
+1. The static prefix or template part that would be in the source code (e.g. fmt.Printf("User %s logged in", username) -> "User logged in")
 2. Key-value pairs of any variables or dynamic values in the log
 
 Log message: "${logMessage}"
 
 Rules for static search string:
-- Must be a substring that appears in the original log
-- Remove all variable values, timestamps, IDs, and other dynamic content
-- Keep string literals and static text that would appear in the source code
-- Make it specific enough to find the source but generic enough to match despite variable values
+- Look for the constant text prefix that would be in a print/log statement
+- Exclude all variable values, data structures, timestamps, IDs, and other dynamic content
+- For structured data like JSON or arrays, only keep the static message prefix before the data
+- Think about how a developer would write the log statement in code:
+  - Good: "Message sent to Kafka" (from: fmt.Printf("Message sent to Kafka: %v", data))
+  - Bad: "Message sent to Kafka: {orders <nil> []}" (includes dynamic data)
+- The static string should be something you'd find in a source file's print/log statement
+- When in doubt, be conservative and only include the clearly static prefix
 
 Rules for variables:
 - Include all dynamic values found in the log
