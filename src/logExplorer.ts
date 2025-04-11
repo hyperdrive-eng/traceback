@@ -382,327 +382,226 @@ export class LogExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
 
   private async openLog(log: LogEntry): Promise<void> {
     try {
+      // Clear any existing decorations
       clearDecorations();
-
-      // Extract log message for Claude analysis
-      let logMessage = '';
-      if (log.jaegerSpan) {
-        logMessage = log.jaegerSpan.operationName;
-        if (log.jaegerSpan.logs && log.jaegerSpan.logs.length > 0) {
-          const eventField = log.jaegerSpan.logs[0].fields.find(field => field.key === 'event');
-          if (eventField) {
-            logMessage += ` - ${eventField.value}`;
-          }
-        }
-      } else if (log.axiomSpan) {
-        logMessage = log.axiomSpan.name || log.message || '';
-      } else {
-        logMessage = log.jsonPayload?.fields?.message || log.message || '';
-      }
-
-      // Try to analyze the log with Claude
-      let analysis: LLMLogAnalysis;
-      try {
-        analysis = await this.claudeService.analyzeLog(logMessage);
-        // Store the analysis in the log entry
-        log.claudeAnalysis = analysis;
-
-        // Find the source file location
-        const repoPath = this.context.globalState.get<string>('repoPath');
-        if (!repoPath) {
-          vscode.window.showErrorMessage('Repository root path is not set.');
-          return;
-        }
-
-        let sourceFile: string | undefined;
-        let targetLine = -1;
-
-        // First try finding code location using Claude's static search string
-        if (analysis.staticSearchString) {
-          const searchResult = await findCodeLocation(
-            {
-              ...log,
-              message: analysis.staticSearchString
-            },
-            repoPath
-          );
-          if (searchResult) {
-            sourceFile = searchResult.file;
-            targetLine = searchResult.line;
-          }
-        }
-
-        // If no result, fall back to regular search methods
-        if (!sourceFile) {
-          const searchResult = await findCodeLocation(log, repoPath);
-          if (searchResult) {
-            sourceFile = searchResult.file;
-            targetLine = searchResult.line;
-          }
-        }
-
-        // If still no result, try format-specific approaches
-        if (!sourceFile) {
-          // For Jaeger format, try to find source based on service name and operation
-          if (log.jaegerSpan) {
-            // Try to find a source file based on the service name
-            const serviceName = log.serviceName || '';
-            if (serviceName) {
-              // Convert service name to a likely filename pattern
-              const normalizedName = serviceName.toLowerCase()
-                .replace(/-/g, '_')
-                .replace(/\s+/g, '_');
-
-              // Search for files that might match this pattern
-              try {
-                const files = await vscode.workspace.findFiles(
-                  new vscode.RelativePattern(repoPath, `**/${normalizedName}.*`),
-                  '**/node_modules/**'
-                );
-
-                if (files.length > 0) {
-                  sourceFile = path.relative(repoPath, files[0].fsPath);
-                }
-              } catch (error) {
-                console.error('Error searching for service files:', error);
-              }
-            }
-          }
-          // For original format with target
-          else if (log.jsonPayload?.target) {
-            const targetPath = log.jsonPayload.target
-              .replace(/::/g, '/')
-              .replace(/-/g, '_')
-              + '.rs';
-
-            try {
-              // Look for a file matching the target path
-              const files = await vscode.workspace.findFiles(
-                new vscode.RelativePattern(repoPath, `**/${targetPath}`),
-                '**/node_modules/**'
-              );
-
-              if (files.length > 0) {
-                sourceFile = path.relative(repoPath, files[0].fsPath);
-              }
-            } catch (error) {
-              console.error('Error searching for target files:', error);
-            }
-          }
-        }
-
-        if (sourceFile && targetLine >= 0) {
-          // Find potential callers
-          const potentialCallers = await this.callStackExplorerProvider?.findPotentialCallers(
-            path.join(repoPath, sourceFile),
-            targetLine
-          );
-
-          if (potentialCallers && potentialCallers.length > 0) {
-            // Analyze callers with Claude
-            await this.callStackExplorerProvider?.analyzeCallers(
-              logMessage,
-              analysis.staticSearchString,
-              this.logs,
-              potentialCallers
-            );
-          }
-        }
-
-        // Update the variable explorer with the selected log
+      
+      // Show progress indicator
+      await vscode.window.withProgress({
+        location: vscode.ProgressLocation.Notification,
+        title: 'Processing log...',
+        cancellable: false
+      }, async (progress) => {
+        
+        // Update the variable and call stack explorers with the selected log
         if (this.variableExplorerProvider) {
           this.variableExplorerProvider.setLog(log);
         }
-
-        // Update the call stack explorer with the selected log
+        
         if (this.callStackExplorerProvider) {
           this.callStackExplorerProvider.setLogEntry(log);
         }
-
-        // Try to analyze the log with Claude
+        
+        // Extract a normalized message for analysis
+        // Our new parsing system should have already normalized the log.message field
+        const logMessage = log.message || log.rawText || '';
+        
+        progress.report({ message: 'Analyzing log with Claude...' });
+        
         try {
+          // Try to get an AI analysis of the log
+          const analysis = await this.claudeService.analyzeLog(logMessage);
+          log.claudeAnalysis = analysis;
+          
+          // Get repository root path
           const repoPath = this.context.globalState.get<string>('repoPath');
           if (!repoPath) {
             vscode.window.showErrorMessage('Repository root path is not set.');
             return;
           }
-
-          let sourceFile: string | undefined;
-          let targetLine = -1;
-
-          // First try finding code location using Claude's static search string
-          if (analysis.staticSearchString) {
-            const searchResult = await findCodeLocation(
-              {
-                ...log,
-                message: analysis.staticSearchString
-              },
-              repoPath
+          
+          progress.report({ message: 'Finding source code location...' });
+          
+          // Find source location - use a simplified, more robust approach
+          let sourceLocation = await this.findSourceLocation(log, analysis, repoPath);
+          
+          if (!sourceLocation) {
+            vscode.window.showInformationMessage(
+              'Could not determine source file location. Try adjusting the log parser or search strategy.'
             );
-            if (searchResult) {
-              sourceFile = searchResult.file;
-              targetLine = searchResult.line;
-            }
-          }
-
-          // If no result, fall back to regular search methods
-          if (!sourceFile) {
-            const searchResult = await findCodeLocation(log, repoPath);
-            if (searchResult) {
-              sourceFile = searchResult.file;
-              targetLine = searchResult.line;
-            }
-          }
-
-          // If still no result, try format-specific approaches
-          if (!sourceFile) {
-            // For Jaeger format, try to find source based on service name and operation
-            if (log.jaegerSpan) {
-              // Try to find a source file based on the service name
-              const serviceName = log.serviceName || '';
-              if (serviceName) {
-                // Convert service name to a likely filename pattern
-                const normalizedName = serviceName.toLowerCase()
-                  .replace(/-/g, '_')
-                  .replace(/\s+/g, '_');
-
-                // Search for files that might match this pattern
-                try {
-                  const files = await vscode.workspace.findFiles(
-                    new vscode.RelativePattern(repoPath, `**/${normalizedName}.*`),
-                    '**/node_modules/**'
-                  );
-
-                  if (files.length > 0) {
-                    sourceFile = path.relative(repoPath, files[0].fsPath);
-                  }
-                } catch (error) {
-                  console.error('Error searching for service files:', error);
-                }
-              }
-            }
-            // For original format with target
-            else if (log.jsonPayload?.target) {
-              const targetPath = log.jsonPayload.target
-                .replace(/::/g, '/')
-                .replace(/-/g, '_')
-                + '.rs';
-
-              try {
-                // Look for a file matching the target path
-                const files = await vscode.workspace.findFiles(
-                  new vscode.RelativePattern(repoPath, `**/${targetPath}`),
-                  '**/node_modules/**'
-                );
-
-                if (files.length > 0) {
-                  sourceFile = path.relative(repoPath, files[0].fsPath);
-                }
-              } catch (error) {
-                console.error('Error searching for target files:', error);
-              }
-            }
-          }
-
-          if (!sourceFile) {
-            vscode.window.showErrorMessage('Could not determine source file location');
             return;
           }
-
+          
+          const { file: sourceFile, line: targetLine } = sourceLocation;
+          
+          // Find potential callers if we have the location
+          if (this.callStackExplorerProvider) {
+            progress.report({ message: 'Analyzing call stack...' });
+            
+            const potentialCallers = await this.callStackExplorerProvider.findPotentialCallers(
+              path.join(repoPath, sourceFile),
+              targetLine
+            );
+            
+            if (potentialCallers && potentialCallers.length > 0) {
+              await this.callStackExplorerProvider.analyzeCallers(
+                logMessage,
+                analysis.staticSearchString,
+                this.logs,
+                potentialCallers
+              );
+            }
+          }
+          
+          // Open the file and highlight the relevant line
+          progress.report({ message: 'Opening source file...' });
+          
           const fullPath = path.join(repoPath, sourceFile);
-
           if (!fs.existsSync(fullPath)) {
             vscode.window.showErrorMessage(`Could not find ${sourceFile} in the repository`);
             return;
           }
-
+          
           // Open the file
           const document = await vscode.workspace.openTextDocument(fullPath);
           const editor = await vscode.window.showTextDocument(document);
-
+          
           if (targetLine >= 0) {
+            // Highlight the line
             const range = new vscode.Range(targetLine, 0, targetLine, 0);
             editor.revealRange(range, vscode.TextEditorRevealType.InCenter);
             editor.setDecorations(logLineDecorationType, [new vscode.Range(targetLine, 0, targetLine, 999)]);
-
-            // Get the line text
+            
+            // Get the line text and decorate variables
             const lineText = document.lineAt(targetLine).text;
-
-            // Create decorations for variables identified by Claude
-            const decorations: vscode.DecorationOptions[] = [];
-
-            if (analysis.variables) {
-              Object.entries(analysis.variables).forEach(([name, value]) => {
-                // Use word boundary regex to find the variable
-                const regex = new RegExp(`\\b${name}\\b`, 'g');
-                let match;
-
-                while ((match = regex.exec(lineText)) !== null) {
-                  const startIndex = match.index;
-                  const range = new vscode.Range(
-                    targetLine,
-                    startIndex,
-                    targetLine,
-                    startIndex + name.length
-                  );
-
-                  decorations.push({
-                    range,
-                    renderOptions: {
-                      after: {
-                        contentText: ` = ${JSON.stringify(value)}`,
-                        fontWeight: 'bold',
-                        color: 'var(--vscode-symbolIcon-variableForeground, var(--vscode-editorInfo-foreground))'
-                      }
-                    }
-                  });
-                }
-              });
-            }
-
-            // Apply all decorations at once
-            if (decorations.length > 0) {
-              editor.setDecorations(variableValueDecorationType, decorations);
-            }
+            this.decorateVariables(editor, targetLine, lineText, analysis);
           }
+          
         } catch (error) {
-          // Check if the error is due to missing API key
+          // Handle Claude API key issues
           if (error instanceof Error && error.message === 'Claude API key not set. Please set your API key first.') {
             const setKey = 'Set API Key';
             const response = await vscode.window.showErrorMessage(
               'Claude API key is not set. Would you like to set it now?',
               setKey
             );
-
+            
             if (response === setKey) {
-              // Execute the setClaudeApiKey command
               await vscode.commands.executeCommand('traceback.setClaudeApiKey');
-              // After setting the key, try to analyze the log again
-              try {
-                const analysis = await this.claudeService.analyzeLog(logMessage);
-                // ... rest of the Claude analysis code ...
-              } catch (retryError) {
-                // If it still fails, continue with regular log opening
-                console.error('Error analyzing log with Claude after setting API key:', retryError);
-              }
             }
+          } else {
+            console.error('Error processing log:', error);
+            vscode.window.showErrorMessage(`Error processing log: ${error instanceof Error ? error.message : String(error)}`);
           }
-
-          // Continue with regular log opening
-          const repoPath = this.context.globalState.get<string>('repoPath');
-          if (!repoPath) {
-            vscode.window.showErrorMessage('Repository root path is not set.');
-            return;
-          }
-
-          // ... rest of the existing openLog implementation ...
         }
-      } catch (error) {
-        console.error('Error analyzing log with Claude:', error);
-      }
+      });
     } catch (error) {
       console.error('Error in openLog:', error);
       vscode.window.showErrorMessage(`Error opening log: ${error}`);
+    }
+  }
+  
+  /**
+   * Find the source code location based on the log and analysis
+   */
+  private async findSourceLocation(
+    log: LogEntry, 
+    analysis?: LLMLogAnalysis, 
+    repoPath?: string
+  ): Promise<{ file: string; line: number } | undefined> {
+    if (!repoPath) return undefined;
+    
+    // First try using Claude's analysis if available
+    if (analysis?.staticSearchString) {
+      const searchResult = await findCodeLocation(
+        { ...log, message: analysis.staticSearchString },
+        repoPath
+      );
+      if (searchResult) return searchResult;
+    }
+    
+    // Then try with the regular message from the log
+    const searchResult = await findCodeLocation(log, repoPath);
+    if (searchResult) return searchResult;
+    
+    // Last resort: try to find files based on the service/target name
+    const serviceName = log.target || log.serviceName || '';
+    if (serviceName) {
+      // Normalize the service name for filename matching
+      const normalizedName = serviceName.toLowerCase()
+        .replace(/::/g, '/')
+        .replace(/-/g, '_')
+        .replace(/\s+/g, '_');
+      
+      try {
+        // Try both exact and wildcard matching
+        for (const pattern of [
+          `**/${normalizedName}.*`,
+          `**/*${normalizedName}*.*`
+        ]) {
+          const files = await vscode.workspace.findFiles(
+            new vscode.RelativePattern(repoPath, pattern),
+            '**/node_modules/**'
+          );
+          
+          if (files.length > 0) {
+            // If we found files but don't know the line, return line 0 as a fallback
+            return {
+              file: path.relative(repoPath, files[0].fsPath),
+              line: 0
+            };
+          }
+        }
+      } catch (error) {
+        console.error('Error searching for service files:', error);
+      }
+    }
+    
+    return undefined;
+  }
+  
+  /**
+   * Decorate variables in the editor
+   */
+  private decorateVariables(
+    editor: vscode.TextEditor,
+    targetLine: number,
+    lineText: string,
+    analysis?: LLMLogAnalysis
+  ): void {
+    if (!analysis?.variables) return;
+    
+    const decorations: vscode.DecorationOptions[] = [];
+    
+    Object.entries(analysis.variables).forEach(([name, value]) => {
+      // Use word boundary regex to find the variable
+      const regex = new RegExp(`\\b${name}\\b`, 'g');
+      let match;
+      
+      while ((match = regex.exec(lineText)) !== null) {
+        const startIndex = match.index;
+        const range = new vscode.Range(
+          targetLine,
+          startIndex,
+          targetLine,
+          startIndex + name.length
+        );
+        
+        decorations.push({
+          range,
+          renderOptions: {
+            after: {
+              contentText: ` = ${JSON.stringify(value)}`,
+              fontWeight: 'bold',
+              color: 'var(--vscode-symbolIcon-variableForeground, var(--vscode-editorInfo-foreground))'
+            }
+          }
+        });
+      }
+    });
+    
+    // Apply all decorations at once
+    if (decorations.length > 0) {
+      editor.setDecorations(variableValueDecorationType, decorations);
     }
   }
 
