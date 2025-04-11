@@ -8,12 +8,14 @@ module.exports = {
     path: path.resolve(__dirname, 'dist'),
     filename: 'extension.js',
     libraryTarget: 'commonjs2',
+    devtoolModuleFilenameTemplate: '../[resource-path]'
   },
+  devtool: 'source-map',
   externals: {
-    vscode: 'commonjs vscode',
+    vscode: 'commonjs vscode'
   },
   resolve: {
-    extensions: ['.ts', '.js'],
+    extensions: ['.ts', '.js']
   },
   module: {
     rules: [
@@ -23,9 +25,14 @@ module.exports = {
         use: [
           {
             loader: 'ts-loader',
-          },
-        ],
-      },
-    ],
-  },
+            options: {
+              compilerOptions: {
+                sourceMap: true,
+              }
+            }
+          }
+        ]
+      }
+    ]
+  }
 };

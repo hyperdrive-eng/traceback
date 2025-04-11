@@ -2,7 +2,7 @@
   "name": "traceback",
   "displayName": "TraceBack",
   "description": "A VS Code extension that brings telemetry data (traces, logs, and metrics) into your code.",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "repository": {
     "type": "git",
     "url": "https://github.com/hyperdrive-eng/traceback.git"
@@ -32,9 +32,20 @@
   "contributes": {
     "configuration": {
       "title": "TraceBack",
-      "properties": {}
+      "properties": {
+          "traceback.claudeApiKey": {
+              "type": "string",
+              "default": "",
+              "description": "API key for Claude AI service"
+          }
+      }
     },
     "commands": [
+      {
+        "command": "traceback.setClaudeApiKey",
+        "title": "Set Claude API Key",
+        "category": "TraceBack"
+      },
       {
         "command": "traceback.filterLogs",
         "title": "Filter Log Levels",

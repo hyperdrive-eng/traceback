@@ -193,6 +193,16 @@ export class VariableExplorerProvider implements vscode.TreeDataProvider<Variabl
         vscode.TreeItemCollapsibleState.None
       ));
       
+      // Add Claude's inferred variables if available
+      if (this.currentLog.claudeAnalysis?.variables) {
+        items.push(new VariableItem(
+          'Inferred Variables',
+          this.currentLog.claudeAnalysis.variables,
+          'section',
+          vscode.TreeItemCollapsibleState.Expanded
+        ));
+      }
+      
       // Handle Jaeger trace format
       if (this.currentLog.jaegerSpan) {
         // Add span information section

@@ -5,6 +5,7 @@ import dayjs from 'dayjs';
 import { findCodeLocation, loadLogs } from './processor';
 import { logLineDecorationType, variableValueDecorationType, clearDecorations } from './decorations';
 import { PinnedLogsProvider } from './pinnedLogsProvider';
+import { ClaudeService, LLMLogAnalysis } from './claudeService';
 
 // Core interfaces for log structure
 export interface Span {
@@ -64,7 +65,7 @@ export interface LogEntry {
   severity: string;
   timestamp: string;
   rawText: string;
-  
+
   // Original log format fields
   insertId?: string;
   jsonPayload: {
@@ -94,20 +95,26 @@ export interface LogEntry {
     };
     type: string;
   };
-  
+
   // Jaeger trace specific fields
   jaegerSpan?: JaegerSpan;
-  
+
   // Axiom trace specific fields
   axiomSpan?: any; // Using 'any' for flexibility with Axiom's response format
-  
+
   // Common trace fields
   serviceName?: string; // Service name from trace data
   parentSpanID?: string; // Parent span ID
-  
+
   // Unified fields for display purposes
   message?: string;
   target?: string;
+
+  // Add Claude analysis results
+  claudeAnalysis?: {
+    staticSearchString: string;
+    variables: Record<string, any>;
+  };
 }
 
 export class LogExplorerProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
@@ -121,26 +128,49 @@ export class LogExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
   private sortByTime: boolean = true;
   private selectedLogLevels: Set<string> = new Set(['INFO', 'DEBUG', 'WARNING', 'ERROR']);
   private variableExplorerProvider: { setLog: (log: LogEntry | undefined) => void } | undefined;
-  private callStackExplorerProvider: { setLogEntry: (log: LogEntry | undefined) => void } | undefined;
+  private callStackExplorerProvider: { setLogEntry: (log: LogEntry | undefined) => void, findPotentialCallers: (sourceFile: string, lineNumber: number) => Promise<Array<{ filePath: string; lineNumber: number; code: string; functionName: string; functionRange?: vscode.Range }>>, analyzeCallers: (currentLogLine: string, staticSearchString: string, allLogs: LogEntry[], potentialCallers: Array<{ filePath: string; lineNumber: number; code: string; functionName: string; functionRange?: vscode.Range }>) => Promise<void> } | undefined;
   private pinnedLogsProvider: PinnedLogsProvider | undefined;
+  private claudeService: ClaudeService = ClaudeService.getInstance();
 
   constructor(context: vscode.ExtensionContext) {
     this.context = context;
     vscode.commands.registerCommand('traceback.openLog', (log: LogEntry) => this.openLog(log));
     vscode.commands.registerCommand('traceback.toggleSort', () => this.toggleSort());
+
+    const setClaudeApiKeyCommand = vscode.commands.registerCommand(
+      'traceback.setClaudeApiKey',
+      async () => {
+        const apiKey = await vscode.window.showInputBox({
+          prompt: 'Enter your Claude API key',
+          password: true,
+          placeHolder: 'Enter your Claude API key here'
+        });
+
+        if (apiKey) {
+          try {
+            await this.claudeService.setApiKey(apiKey);
+            vscode.window.showInformationMessage('Claude API key set successfully');
+          } catch (error) {
+            vscode.window.showErrorMessage('Failed to set Claude API key');
+          }
+        }
+      }
+    );
+
+    context.subscriptions.push(setClaudeApiKeyCommand);
   }
-  
+
   /**
    * Set the variable explorer provider to update when logs are selected
    */
   public setVariableExplorer(provider: { setLog: (log: LogEntry | undefined) => void }): void {
     this.variableExplorerProvider = provider;
   }
-  
+
   /**
    * Set the call stack explorer provider to update when logs are selected
    */
-  public setCallStackExplorer(provider: { setLogEntry: (log: LogEntry | undefined) => void }): void {
+  public setCallStackExplorer(provider: { setLogEntry: (log: LogEntry | undefined) => void, findPotentialCallers: (sourceFile: string, lineNumber: number) => Promise<Array<{ filePath: string; lineNumber: number; code: string; functionName: string; functionRange?: vscode.Range }>>, analyzeCallers: (currentLogLine: string, staticSearchString: string, allLogs: LogEntry[], potentialCallers: Array<{ filePath: string; lineNumber: number; code: string; functionName: string; functionRange?: vscode.Range }>) => Promise<void> }): void {
     this.callStackExplorerProvider = provider;
   }
 
@@ -165,62 +195,84 @@ export class LogExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
       if (this.sortByTime) {
         // Get all logs and sort by timestamp
         const allLogs = Array.from(this.spanMap.values()).flat()
-          .filter(log => this.selectedLogLevels.has(log.severity))
+          .filter(log => this.selectedLogLevels.has(log.severity.toUpperCase()))
           .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
 
-        // Group consecutive logs with same target/span
+        // For logs without jsonPayload, show them individually
+        const ungroupedLogs = allLogs.filter(log => !log.jsonPayload && !log.jaegerSpan && !log.axiomSpan);
+        if (ungroupedLogs.length > 0) {
+          return Promise.resolve(
+            ungroupedLogs.map(log => new LogTreeItem(log, this.pinnedLogsProvider?.isPinned(log) ?? false))
+          );
+        }
+
+        // For logs with jsonPayload, group them as before
         const result: vscode.TreeItem[] = [];
         let currentGroup: LogEntry[] = [];
         let currentGroupName: string | null = null;
 
-        allLogs.forEach((log) => {
-          const groupName = this.getGroupName(log);
-          
-          if (groupName === currentGroupName) {
-            // Add to current group
-            currentGroup.push(log);
-          } else {
-            // Create group for previous logs if exists
-            if (currentGroup.length > 0) {
-              result.push(new SpanGroupItem(currentGroupName!, currentGroup, vscode.TreeItemCollapsibleState.Expanded));
-            }
-            
-            // Start new group
-            currentGroupName = groupName;
-            currentGroup = [log];
-          }
-        });
+        allLogs
+          .filter(log => log.jsonPayload || log.jaegerSpan || log.axiomSpan)
+          .forEach((log) => {
+            const groupName = this.getGroupName(log);
 
-        // Handle the last group
+            if (groupName === currentGroupName) {
+              currentGroup.push(log);
+            } else {
+              if (currentGroup.length > 0) {
+                result.push(new SpanGroupItem(currentGroupName!, currentGroup, vscode.TreeItemCollapsibleState.Expanded));
+              }
+              currentGroupName = groupName;
+              currentGroup = [log];
+            }
+          });
+
         if (currentGroup.length > 0) {
           result.push(new SpanGroupItem(currentGroupName!, currentGroup, vscode.TreeItemCollapsibleState.Expanded));
         }
 
         return Promise.resolve(result);
       } else {
-        // For regular grouping, group by target and span
+        // For regular grouping
         const groupedLogs = new Map<string, LogEntry[]>();
-        
+        const ungroupedLogs: LogEntry[] = [];
+
         Array.from(this.spanMap.values())
           .flat()
           .filter(log => this.selectedLogLevels.has(log.severity))
           .forEach(log => {
-            const groupName = this.getGroupName(log);
-            if (!groupedLogs.has(groupName)) {
-              groupedLogs.set(groupName, []);
+            if (!log.jsonPayload && !log.jaegerSpan && !log.axiomSpan) {
+              ungroupedLogs.push(log);
+            } else {
+              const groupName = this.getGroupName(log);
+              if (!groupedLogs.has(groupName)) {
+                groupedLogs.set(groupName, []);
+              }
+              groupedLogs.get(groupName)!.push(log);
             }
-            groupedLogs.get(groupName)!.push(log);
           });
 
-        return Promise.resolve(
-          Array.from(groupedLogs.entries())
-            .map(([groupName, logs]) => new SpanGroupItem(
-              groupName,
-              logs,
-              vscode.TreeItemCollapsibleState.Expanded
-            ))
-            .sort((a, b) => a.spanName.localeCompare(b.spanName))
+        const result: vscode.TreeItem[] = [];
+
+        // Add grouped logs first
+        result.push(...Array.from(groupedLogs.entries())
+          .map(([groupName, logs]) => new SpanGroupItem(
+            groupName,
+            logs,
+            vscode.TreeItemCollapsibleState.Expanded
+          ))
+          .sort((a, b) => a.spanName.localeCompare(b.spanName))
         );
+
+        // Add ungrouped logs as individual items
+        if (ungroupedLogs.length > 0) {
+          result.push(...ungroupedLogs
+            .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
+            .map(log => new LogTreeItem(log, this.pinnedLogsProvider?.isPinned(log) ?? false))
+          );
+        }
+
+        return Promise.resolve(result);
       }
     } else if (element instanceof SpanGroupItem) {
       return Promise.resolve(
@@ -240,27 +292,27 @@ export class LogExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
       const operationName = log.jaegerSpan.operationName || 'unknown-operation';
       return `${serviceName}::${operationName}`;
     }
-    
+
     // Handle Axiom trace format
     if (log.axiomSpan) {
       const serviceName = log.serviceName || log.axiomSpan['service.name'] || 'unknown-service';
       const operationName = log.axiomSpan.name || 'unknown-operation';
       return `${serviceName}::${operationName}`;
     }
-    
+
     // Handle original log format
     const target = log.jsonPayload?.target || '';
     const spanName = log.jsonPayload?.span?.name;
-    
+
     if (spanName) {
       return `${target}::${spanName}`;
     }
-    
+
     // Use unified fields as fallback
     if (log.target) {
       return log.target;
     }
-    
+
     return target || 'unknown';
   }
 
@@ -279,27 +331,49 @@ export class LogExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
 
       // Group logs by span name
       this.spanMap.clear();
+
+      // Create a special "ungrouped" entry for logs without jsonPayload
+      const ungroupedLogs: LogEntry[] = [];
+
       this.logs.forEach(log => {
+        // If log has no jsonPayload and no special formats, add to ungrouped
+        if (!log.jsonPayload && !log.jaegerSpan && !log.axiomSpan) {
+          ungroupedLogs.push(log);
+          return;
+        }
+
         let spanName: string;
-        
         if (log.jaegerSpan) {
           // For Jaeger format, use a combination of service and operation name
           const serviceName = log.serviceName || 'unknown';
           const operationName = log.jaegerSpan.operationName || 'unknown';
           spanName = `${serviceName}::${operationName}`;
+        } else if (log.axiomSpan) {
+          // For Axiom format
+          const serviceName = log.serviceName || log.axiomSpan['service.name'] || 'unknown';
+          const operationName = log.axiomSpan.name || 'unknown';
+          spanName = `${serviceName}::${operationName}`;
         } else if (log.jsonPayload?.span) {
           // Original format with span
-          spanName = log.jsonPayload.span.name || 'Unknown';
+          spanName = `${log.jsonPayload.target || ''}::${log.jsonPayload.span.name || 'Unknown'}`;
+        } else if (log.jsonPayload?.target) {
+          // Original format with just target
+          spanName = log.jsonPayload.target;
         } else {
-          // Fallback for any format
-          spanName = log.target || 'Unknown';
+          // Shouldn't reach here due to earlier check
+          return;
         }
-        
+
         if (!this.spanMap.has(spanName)) {
           this.spanMap.set(spanName, []);
         }
         this.spanMap.get(spanName)!.push(log);
       });
+
+      // Add ungrouped logs to the map with a special key
+      if (ungroupedLogs.length > 0) {
+        this.spanMap.set('__ungrouped__', ungroupedLogs);
+      }
     } catch (error) {
       console.error('Error loading logs:', error);
       this.logs = [];
@@ -310,176 +384,321 @@ export class LogExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
     try {
       clearDecorations();
 
-      // Update the variable explorer with the selected log
-      if (this.variableExplorerProvider) {
-        this.variableExplorerProvider.setLog(log);
-      }
-      
-      // Update the call stack explorer with the selected log
-      if (this.callStackExplorerProvider) {
-        this.callStackExplorerProvider.setLogEntry(log);
-      }
-
-      const repoPath = this.context.globalState.get<string>('repoPath');
-      if (!repoPath) {
-        vscode.window.showErrorMessage('Repository root path is not set.');
-        return;
-      }
-
-      let sourceFile: string | undefined;
-      let targetLine = -1;
-
-      // Find source file location using the findCodeLocation function
-      const searchResult = await findCodeLocation(log, repoPath);
-      if (searchResult) {
-        sourceFile = searchResult.file;
-        targetLine = searchResult.line;
+      // Extract log message for Claude analysis
+      let logMessage = '';
+      if (log.jaegerSpan) {
+        logMessage = log.jaegerSpan.operationName;
+        if (log.jaegerSpan.logs && log.jaegerSpan.logs.length > 0) {
+          const eventField = log.jaegerSpan.logs[0].fields.find(field => field.key === 'event');
+          if (eventField) {
+            logMessage += ` - ${eventField.value}`;
+          }
+        }
+      } else if (log.axiomSpan) {
+        logMessage = log.axiomSpan.name || log.message || '';
+      } else {
+        logMessage = log.jsonPayload?.fields?.message || log.message || '';
       }
 
-      // If no result from findCodeLocation, try format-specific approaches
-      if (!sourceFile) {
-        // For Jaeger format, try to find source based on service name and operation
-        if (log.jaegerSpan) {
-          // Try to find a source file based on the service name
-          const serviceName = log.serviceName || '';
-          if (serviceName) {
-            // Convert service name to a likely filename pattern
-            const normalizedName = serviceName.toLowerCase()
+      // Try to analyze the log with Claude
+      let analysis: LLMLogAnalysis;
+      try {
+        analysis = await this.claudeService.analyzeLog(logMessage);
+        // Store the analysis in the log entry
+        log.claudeAnalysis = analysis;
+
+        // Find the source file location
+        const repoPath = this.context.globalState.get<string>('repoPath');
+        if (!repoPath) {
+          vscode.window.showErrorMessage('Repository root path is not set.');
+          return;
+        }
+
+        let sourceFile: string | undefined;
+        let targetLine = -1;
+
+        // First try finding code location using Claude's static search string
+        if (analysis.staticSearchString) {
+          const searchResult = await findCodeLocation(
+            {
+              ...log,
+              message: analysis.staticSearchString
+            },
+            repoPath
+          );
+          if (searchResult) {
+            sourceFile = searchResult.file;
+            targetLine = searchResult.line;
+          }
+        }
+
+        // If no result, fall back to regular search methods
+        if (!sourceFile) {
+          const searchResult = await findCodeLocation(log, repoPath);
+          if (searchResult) {
+            sourceFile = searchResult.file;
+            targetLine = searchResult.line;
+          }
+        }
+
+        // If still no result, try format-specific approaches
+        if (!sourceFile) {
+          // For Jaeger format, try to find source based on service name and operation
+          if (log.jaegerSpan) {
+            // Try to find a source file based on the service name
+            const serviceName = log.serviceName || '';
+            if (serviceName) {
+              // Convert service name to a likely filename pattern
+              const normalizedName = serviceName.toLowerCase()
+                .replace(/-/g, '_')
+                .replace(/\s+/g, '_');
+
+              // Search for files that might match this pattern
+              try {
+                const files = await vscode.workspace.findFiles(
+                  new vscode.RelativePattern(repoPath, `**/${normalizedName}.*`),
+                  '**/node_modules/**'
+                );
+
+                if (files.length > 0) {
+                  sourceFile = path.relative(repoPath, files[0].fsPath);
+                }
+              } catch (error) {
+                console.error('Error searching for service files:', error);
+              }
+            }
+          }
+          // For original format with target
+          else if (log.jsonPayload?.target) {
+            const targetPath = log.jsonPayload.target
+              .replace(/::/g, '/')
               .replace(/-/g, '_')
-              .replace(/\s+/g, '_');
-            
-            // Search for files that might match this pattern
+              + '.rs';
+
             try {
+              // Look for a file matching the target path
               const files = await vscode.workspace.findFiles(
-                new vscode.RelativePattern(repoPath, `**/${normalizedName}.*`),
+                new vscode.RelativePattern(repoPath, `**/${targetPath}`),
                 '**/node_modules/**'
               );
-              
+
               if (files.length > 0) {
                 sourceFile = path.relative(repoPath, files[0].fsPath);
               }
             } catch (error) {
-              console.error('Error searching for service files:', error);
+              console.error('Error searching for target files:', error);
             }
           }
         }
-        // For original format with target
-        else if (log.jsonPayload?.target) {
-          const targetPath = log.jsonPayload.target
-            .replace(/::/g, '/')
-            .replace(/-/g, '_')
-            + '.rs';
-          
-          try {
-            // Look for a file matching the target path
-            const files = await vscode.workspace.findFiles(
-              new vscode.RelativePattern(repoPath, `**/${targetPath}`),
-              '**/node_modules/**'
+
+        if (sourceFile && targetLine >= 0) {
+          // Find potential callers
+          const potentialCallers = await this.callStackExplorerProvider?.findPotentialCallers(
+            path.join(repoPath, sourceFile),
+            targetLine
+          );
+
+          if (potentialCallers && potentialCallers.length > 0) {
+            // Analyze callers with Claude
+            await this.callStackExplorerProvider?.analyzeCallers(
+              logMessage,
+              analysis.staticSearchString,
+              this.logs,
+              potentialCallers
             );
-            
-            if (files.length > 0) {
-              sourceFile = path.relative(repoPath, files[0].fsPath);
-            }
-          } catch (error) {
-            console.error('Error searching for target files:', error);
           }
         }
-      }
 
-      if (!sourceFile) {
-        vscode.window.showErrorMessage('Could not determine source file location');
-        return;
-      }
+        // Update the variable explorer with the selected log
+        if (this.variableExplorerProvider) {
+          this.variableExplorerProvider.setLog(log);
+        }
 
-      const fullPath = path.join(repoPath, sourceFile);
+        // Update the call stack explorer with the selected log
+        if (this.callStackExplorerProvider) {
+          this.callStackExplorerProvider.setLogEntry(log);
+        }
 
-      if (!fs.existsSync(fullPath)) {
-        vscode.window.showErrorMessage(`Could not find ${sourceFile} in the repository`);
-        return;
-      }
+        // Try to analyze the log with Claude
+        try {
+          const repoPath = this.context.globalState.get<string>('repoPath');
+          if (!repoPath) {
+            vscode.window.showErrorMessage('Repository root path is not set.');
+            return;
+          }
 
-      // Open the file
-      const document = await vscode.workspace.openTextDocument(fullPath);
-      const editor = await vscode.window.showTextDocument(document);
+          let sourceFile: string | undefined;
+          let targetLine = -1;
 
-      if (targetLine >= 0) {
-        const range = new vscode.Range(targetLine, 0, targetLine, 0);
-        editor.revealRange(range, vscode.TextEditorRevealType.InCenter);
-        editor.setDecorations(logLineDecorationType, [new vscode.Range(targetLine, 0, targetLine, 999)]);
+          // First try finding code location using Claude's static search string
+          if (analysis.staticSearchString) {
+            const searchResult = await findCodeLocation(
+              {
+                ...log,
+                message: analysis.staticSearchString
+              },
+              repoPath
+            );
+            if (searchResult) {
+              sourceFile = searchResult.file;
+              targetLine = searchResult.line;
+            }
+          }
 
-        // Get the line text
-        const lineText = document.lineAt(targetLine).text;
+          // If no result, fall back to regular search methods
+          if (!sourceFile) {
+            const searchResult = await findCodeLocation(log, repoPath);
+            if (searchResult) {
+              sourceFile = searchResult.file;
+              targetLine = searchResult.line;
+            }
+          }
 
-        // Create decorations based on the log type
-        const decorations: vscode.DecorationOptions[] = [];
-        
-        if (log.jaegerSpan) {
-          // For Jaeger spans, show tag values as decorations
-          log.jaegerSpan.tags.forEach(tag => {
-            // Use word boundary regex to find the tag key in the line
-            const regex = new RegExp(`\\b${tag.key.replace(/\./g, '\\.')}\\b`, 'g');
-            let match;
-            
-            while ((match = regex.exec(lineText)) !== null) {
-              const startIndex = match.index;
-              const range = new vscode.Range(
-                targetLine,
-                startIndex,
-                targetLine,
-                startIndex + tag.key.length
-              );
-              
-              decorations.push({
-                range,
-                renderOptions: {
-                  after: {
-                    contentText: ` = ${JSON.stringify(tag.value)}`,
-                    fontWeight: 'bold',
-                    color: 'var(--vscode-symbolIcon-variableForeground, var(--vscode-editorInfo-foreground))'
+          // If still no result, try format-specific approaches
+          if (!sourceFile) {
+            // For Jaeger format, try to find source based on service name and operation
+            if (log.jaegerSpan) {
+              // Try to find a source file based on the service name
+              const serviceName = log.serviceName || '';
+              if (serviceName) {
+                // Convert service name to a likely filename pattern
+                const normalizedName = serviceName.toLowerCase()
+                  .replace(/-/g, '_')
+                  .replace(/\s+/g, '_');
+
+                // Search for files that might match this pattern
+                try {
+                  const files = await vscode.workspace.findFiles(
+                    new vscode.RelativePattern(repoPath, `**/${normalizedName}.*`),
+                    '**/node_modules/**'
+                  );
+
+                  if (files.length > 0) {
+                    sourceFile = path.relative(repoPath, files[0].fsPath);
                   }
+                } catch (error) {
+                  console.error('Error searching for service files:', error);
+                }
+              }
+            }
+            // For original format with target
+            else if (log.jsonPayload?.target) {
+              const targetPath = log.jsonPayload.target
+                .replace(/::/g, '/')
+                .replace(/-/g, '_')
+                + '.rs';
+
+              try {
+                // Look for a file matching the target path
+                const files = await vscode.workspace.findFiles(
+                  new vscode.RelativePattern(repoPath, `**/${targetPath}`),
+                  '**/node_modules/**'
+                );
+
+                if (files.length > 0) {
+                  sourceFile = path.relative(repoPath, files[0].fsPath);
+                }
+              } catch (error) {
+                console.error('Error searching for target files:', error);
+              }
+            }
+          }
+
+          if (!sourceFile) {
+            vscode.window.showErrorMessage('Could not determine source file location');
+            return;
+          }
+
+          const fullPath = path.join(repoPath, sourceFile);
+
+          if (!fs.existsSync(fullPath)) {
+            vscode.window.showErrorMessage(`Could not find ${sourceFile} in the repository`);
+            return;
+          }
+
+          // Open the file
+          const document = await vscode.workspace.openTextDocument(fullPath);
+          const editor = await vscode.window.showTextDocument(document);
+
+          if (targetLine >= 0) {
+            const range = new vscode.Range(targetLine, 0, targetLine, 0);
+            editor.revealRange(range, vscode.TextEditorRevealType.InCenter);
+            editor.setDecorations(logLineDecorationType, [new vscode.Range(targetLine, 0, targetLine, 999)]);
+
+            // Get the line text
+            const lineText = document.lineAt(targetLine).text;
+
+            // Create decorations for variables identified by Claude
+            const decorations: vscode.DecorationOptions[] = [];
+
+            if (analysis.variables) {
+              Object.entries(analysis.variables).forEach(([name, value]) => {
+                // Use word boundary regex to find the variable
+                const regex = new RegExp(`\\b${name}\\b`, 'g');
+                let match;
+
+                while ((match = regex.exec(lineText)) !== null) {
+                  const startIndex = match.index;
+                  const range = new vscode.Range(
+                    targetLine,
+                    startIndex,
+                    targetLine,
+                    startIndex + name.length
+                  );
+
+                  decorations.push({
+                    range,
+                    renderOptions: {
+                      after: {
+                        contentText: ` = ${JSON.stringify(value)}`,
+                        fontWeight: 'bold',
+                        color: 'var(--vscode-symbolIcon-variableForeground, var(--vscode-editorInfo-foreground))'
+                      }
+                    }
+                  });
                 }
               });
             }
-          });
-        } 
-        // For regular logs, show fields as decorations
-        else if (log.jsonPayload?.fields) {
-          const fields = log.jsonPayload.fields;
-          
-          Object.entries(fields).forEach(([name, value]) => {
-            if (name !== 'message') {
-              // Use word boundary regex to find the variable
-              const regex = new RegExp(`\\b${name}\\b`, 'g');
-              let match;
-              
-              while ((match = regex.exec(lineText)) !== null) {
-                const startIndex = match.index;
-                const range = new vscode.Range(
-                  targetLine,
-                  startIndex,
-                  targetLine,
-                  startIndex + name.length
-                );
-                
-                decorations.push({
-                  range,
-                  renderOptions: {
-                    after: {
-                      contentText: ` = ${JSON.stringify(value)}`,
-                      fontWeight: 'bold',
-                      color: 'var(--vscode-symbolIcon-variableForeground, var(--vscode-editorInfo-foreground))'
-                    }
-                  }
-                });
+
+            // Apply all decorations at once
+            if (decorations.length > 0) {
+              editor.setDecorations(variableValueDecorationType, decorations);
+            }
+          }
+        } catch (error) {
+          // Check if the error is due to missing API key
+          if (error instanceof Error && error.message === 'Claude API key not set. Please set your API key first.') {
+            const setKey = 'Set API Key';
+            const response = await vscode.window.showErrorMessage(
+              'Claude API key is not set. Would you like to set it now?',
+              setKey
+            );
+
+            if (response === setKey) {
+              // Execute the setClaudeApiKey command
+              await vscode.commands.executeCommand('traceback.setClaudeApiKey');
+              // After setting the key, try to analyze the log again
+              try {
+                const analysis = await this.claudeService.analyzeLog(logMessage);
+                // ... rest of the Claude analysis code ...
+              } catch (retryError) {
+                // If it still fails, continue with regular log opening
+                console.error('Error analyzing log with Claude after setting API key:', retryError);
               }
             }
-          });
-        }
+          }
 
-        // Apply all decorations at once
-        if (decorations.length > 0) {
-          editor.setDecorations(variableValueDecorationType, decorations);
+          // Continue with regular log opening
+          const repoPath = this.context.globalState.get<string>('repoPath');
+          if (!repoPath) {
+            vscode.window.showErrorMessage('Repository root path is not set.');
+            return;
+          }
+
+          // ... rest of the existing openLog implementation ...
         }
+      } catch (error) {
+        console.error('Error analyzing log with Claude:', error);
       }
     } catch (error) {
       console.error('Error in openLog:', error);
@@ -503,7 +722,7 @@ export class LogExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
 
   // Modify the filter method to use LogEntry's severity field
   private filterLogsByLevel(logs: LogEntry[]): LogEntry[] {
-    return logs.filter(log => 
+    return logs.filter(log =>
       this.selectedLogLevels.has(log.severity)
     );
   }
@@ -511,7 +730,7 @@ export class LogExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
   // Update the log level selection method with correct values
   async selectLogLevels(): Promise<void> {
     const logLevels = ['INFO', 'DEBUG', 'WARNING', 'ERROR'];
-    
+
     const selectedLevels = await vscode.window.showQuickPick(
       logLevels.map(level => ({
         label: level,
@@ -529,7 +748,7 @@ export class LogExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
       this.selectedLogLevels = new Set(
         selectedLevels.map(item => item.label)
       );
-      
+
       // If nothing selected, select all (prevent empty view)
       if (this.selectedLogLevels.size === 0) {
         this.selectedLogLevels = new Set(logLevels);
@@ -559,12 +778,12 @@ export class SpanGroupItem extends vscode.TreeItem {
     }, {} as Record<string, number>);
 
     // Get time range
-    const sortedLogs = [...logs].sort((a, b) => 
+    const sortedLogs = [...logs].sort((a, b) =>
       new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
     );
     const firstLog = sortedLogs[0];
     const lastLog = sortedLogs[sortedLogs.length - 1];
-    
+
     const startTime = dayjs(firstLog.timestamp);
     const endTime = dayjs(lastLog.timestamp);
     const duration = endTime.diff(startTime, 'millisecond');
@@ -585,7 +804,7 @@ export class SpanGroupItem extends vscode.TreeItem {
       .join(', ');
 
     this.description = `(${startTime.format('HH:mm:ss.SSS')} - ${endTime.format('HH:mm:ss.SSS')}, ${durationStr}) [${severityInfo}]`;
-    
+
     // Enhanced tooltip with all details
     this.tooltip = [
       `Group: ${spanName}`,
@@ -597,7 +816,7 @@ export class SpanGroupItem extends vscode.TreeItem {
       '',
       `Total logs: ${logs.length}`,
       'Log levels:',
-      ...Object.entries(severityCounts).map(([level, count]) => 
+      ...Object.entries(severityCounts).map(([level, count]) =>
         `  ${level}: ${count}`
       )
     ].join('\n');
@@ -623,12 +842,12 @@ export class LogTreeItem extends vscode.TreeItem {
 
   constructor(protected log: LogEntry, private isPinned: boolean = false) {
     let fullMessage: string;
-    
+
     // Handle Jaeger trace format
     if (log.jaegerSpan) {
       // Use operationName as the main message
       const operationName = log.jaegerSpan.operationName;
-      
+
       // Extract an event message if available (from log entries)
       let eventMessage = '';
       if (log.jaegerSpan.logs && log.jaegerSpan.logs.length > 0) {
@@ -638,7 +857,7 @@ export class LogTreeItem extends vscode.TreeItem {
           eventMessage = ` - ${eventField.value}`;
         }
       }
-      
+
       // Look for important tags to display
       let tagInfo = '';
       const importantTags = ['http.method', 'http.status_code', 'error', 'rpc.method'];
@@ -648,35 +867,35 @@ export class LogTreeItem extends vscode.TreeItem {
           tagInfo += ` [${tag.key}=${tag.value}]`;
         }
       }
-      
+
       fullMessage = `${operationName}${eventMessage}${tagInfo}`;
     }
     // Handle Axiom trace format
     else if (log.axiomSpan) {
       // Use span name as the main message
       const operationName = log.axiomSpan.name || 'Unknown operation';
-      
+
       // Build extra information from important attributes
       let attributeInfo = '';
       const importantAttrs = [
-        'http.method', 
-        'http.status_code', 
-        'error', 
-        'rpc.method', 
+        'http.method',
+        'http.status_code',
+        'error',
+        'rpc.method',
         'attributes.http.method',
         'attributes.http.status_code',
         'attributes.error.type'
       ];
-      
+
       for (const attrName of importantAttrs) {
         if (log.axiomSpan[attrName]) {
           attributeInfo += ` [${attrName.replace('attributes.', '')}=${log.axiomSpan[attrName]}]`;
         }
       }
-      
+
       // Include duration if available
       const duration = log.axiomSpan.duration ? ` (${log.axiomSpan.duration})` : '';
-      
+
       fullMessage = `${operationName}${duration}${attributeInfo}`;
     }
     // Handle original log format
@@ -685,16 +904,16 @@ export class LogTreeItem extends vscode.TreeItem {
       const chain = log.jsonPayload.fields.chain ? `[${log.jsonPayload.fields.chain}] ` : '';
       fullMessage = `${chain}${message}`;
     }
-    // Fallback to unified message field
+      // Fallback to unified message field or rawText
     else {
-      fullMessage = log.message || 'No message';
+      fullMessage = log.message || log.rawText || 'No message';
     }
-    
+
     const truncatedMessage = LogTreeItem.truncateMessage(fullMessage);
 
     // Add pin icon to the label if pinned
     super(truncatedMessage, vscode.TreeItemCollapsibleState.None);
-    
+
     // Initialize first log time if not set
     if (LogTreeItem.firstLogTime === null) {
       LogTreeItem.firstLogTime = new Date(log.timestamp).getTime();
@@ -703,7 +922,7 @@ export class LogTreeItem extends vscode.TreeItem {
     // Calculate relative time
     const currentLogTime = new Date(log.timestamp).getTime();
     const timeDiff = currentLogTime - LogTreeItem.firstLogTime;
-    
+
     // Format relative time
     let relativeTime;
     if (timeDiff === 0) {
@@ -717,9 +936,9 @@ export class LogTreeItem extends vscode.TreeItem {
       const seconds = ((timeDiff % 60000) / 1000).toFixed(1);
       relativeTime = `+${minutes}m ${seconds}s`;
     }
-    
+
     this.description = `(${relativeTime})`;
-    
+
     // Set contextValue for pin/unpin menu visibility
     this.contextValue = isPinned ? 'pinned' : 'unpinned';
 
@@ -733,7 +952,7 @@ export class LogTreeItem extends vscode.TreeItem {
     } else {
       location = log.jsonPayload?.target || log.target || 'Unknown';
     }
-    
+
     const tooltipDetails = [
       `Time: ${new Date(log.timestamp).toLocaleString()}`,
       `Level: ${log.severity}`,
@@ -741,11 +960,11 @@ export class LogTreeItem extends vscode.TreeItem {
       '',
       isPinned ? 'Click to unpin' : 'Click to pin'
     ];
-    
+
     const tooltip = new vscode.MarkdownString(tooltipDetails.join('\n\n'));
     tooltip.isTrusted = true;
     this.tooltip = tooltip;
-    
+
     this.command = {
       command: 'traceback.openLog',
       title: 'Open Log',
