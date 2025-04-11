@@ -5,69 +5,16 @@ import { VariableDecorator } from "./variableDecorator";
 import { registerCallStackExplorer } from "./callStackExplorer";
 import { PinnedLogsProvider } from "./pinnedLogsProvider";
 import { ExtensibleLogParser, LogParser } from "./processor";
+import { SettingsView } from "./settingsView";
 
 // Global registry for log parsers
 export const logParserRegistry = new ExtensibleLogParser();
 
 export function activate(context: vscode.ExtensionContext) {
   console.log("TraceBack is now active");
-
-  // Add status bar item
-  const statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left);
-  statusBarItem.command = "traceback.setLogPath";
-  statusBarItem.tooltip = "Click to change log file path";
-
-  // Add status bar item for Jaeger trace loading
-  const jaegerStatusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left);
-  jaegerStatusBarItem.command = "traceback.loadJaegerTrace";
-  jaegerStatusBarItem.text = "$(globe) Load Jaeger Trace";
-  jaegerStatusBarItem.tooltip = "Click to load a Jaeger trace from URL";
-  jaegerStatusBarItem.show();
-
-  // Add status bar item for Axiom trace loading
-  const axiomStatusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left);
-  axiomStatusBarItem.command = "traceback.loadAxiomTrace";
-  axiomStatusBarItem.text = "$(server) Load Axiom Trace";
-  axiomStatusBarItem.tooltip = "Click to load an Axiom trace by ID";
-  axiomStatusBarItem.show();
-
-  // Add a new status bar item for repo path
-  const repoStatusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left);
-  repoStatusBarItem.command = "traceback.setRepoPath";
-  repoStatusBarItem.tooltip = "Click to change repository root path";
-
-  // Update all status bars
-  const updateStatusBars = () => {
-    const currentLogPath = context.globalState.get<string>("logFilePath");
-    const currentRepoPath = context.globalState.get<string>("repoPath");
-    const currentJaegerTraceId = context.globalState.get<string>("jaegerTraceId");
-    const currentAxiomTraceId = context.globalState.get<string>("axiomTraceId");
-    const currentJaegerEndpoint = context.globalState.get<string>("jaegerEndpoint") || "http://localhost:8080/jaeger/ui/api/traces";
-
-    statusBarItem.text = `$(file) Log: ${currentLogPath || "Not Set"}`;
-    repoStatusBarItem.text = `$(repo) Repo: ${currentRepoPath || "Not Set"}`;
-
-    // Update Jaeger status bar
-    if (currentJaegerTraceId) {
-      jaegerStatusBarItem.text = `$(globe) Jaeger: ${currentJaegerTraceId}`;
-    } else {
-      jaegerStatusBarItem.text = `$(globe) Load Jaeger Trace`;
-    }
-
-    // Update Axiom status bar
-    if (currentAxiomTraceId) {
-      axiomStatusBarItem.text = `$(server) Axiom: ${currentAxiomTraceId}`;
-    } else {
-      axiomStatusBarItem.text = `$(server) Load Axiom Trace`;
-    }
-
-    statusBarItem.show();
-    repoStatusBarItem.show();
-    jaegerStatusBarItem.show();
-    axiomStatusBarItem.show();
-  };
-
-  updateStatusBars();
+  
+  // Empty function to replace status bar updates since we've removed the status bars
+  const updateStatusBars = () => {};
 
   // Create the LogExplorerProvider instance
   const logExplorerProvider = new LogExplorerProvider(context);
@@ -376,6 +323,14 @@ export function activate(context: vscode.ExtensionContext) {
     }
   );
 
+  // Register settings command
+  const openSettingsCommand = vscode.commands.registerCommand(
+    "traceback.openSettings",
+    () => {
+      SettingsView.createOrShow(context);
+    }
+  );
+
   context.subscriptions.push(
     treeView,
     refreshCommand,
@@ -393,10 +348,7 @@ export function activate(context: vscode.ExtensionContext) {
     getAxiomTokenCommand,
     getAxiomDatasetCommand,
     registerLogParserCommand,
-    statusBarItem,
-    jaegerStatusBarItem,
-    axiomStatusBarItem,
-    repoStatusBarItem,
+    openSettingsCommand,
     vscode.commands.registerCommand('traceback.pinLog', (item: LogTreeItem) => {
       const log = item.getLogEntry();
       pinnedLogsProvider.pinLog(log);

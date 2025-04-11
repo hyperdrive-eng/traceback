@@ -26,7 +26,8 @@
     "onCommand:traceback.loadJaegerTrace",
     "onCommand:traceback.setJaegerEndpoint",
     "onCommand:traceback.loadAxiomTrace",
-    "onCommand:traceback.setAxiomDataset"
+    "onCommand:traceback.setAxiomDataset",
+    "onCommand:traceback.openSettings"
   ],
   "main": "./dist/extension.js",
   "contributes": {
@@ -113,6 +114,12 @@
         "command": "traceback.setAxiomDataset",
         "title": "Set Axiom Dataset",
         "icon": "$(gear)"
+      },
+      {
+        "command": "traceback.openSettings",
+        "title": "Open TraceBack Settings",
+        "category": "TraceBack",
+        "icon": "$(settings-gear)"
       }
     ],
     "viewsContainers": {
@@ -167,24 +174,9 @@
           "group": "navigation@3"
         },
         {
-          "command": "traceback.loadJaegerTrace",
+          "command": "traceback.openSettings",
           "when": "view == logExplorer",
           "group": "navigation@4"
-        },
-        {
-          "command": "traceback.loadAxiomTrace",
-          "when": "view == logExplorer",
-          "group": "navigation@5"
-        },
-        {
-          "command": "traceback.clearExplorers",
-          "when": "view == logVariableExplorer",
-          "group": "navigation@1"
-        },
-        {
-          "command": "traceback.clearExplorers",
-          "when": "view == callStackExplorer",
-          "group": "navigation@1"
         },
         {
           "command": "traceback.clearPins",
@@ -210,7 +202,13 @@
         }
       ]
     },
-    "keybindings": []
+    "keybindings": [],
+    "commandPalette": [
+      {
+        "command": "traceback.openSettings",
+        "title": "TraceBack: Open Settings"
+      }
+    ]
   },
   "scripts": {
     "vscode:prepublish": "webpack --mode production",
