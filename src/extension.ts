@@ -12,14 +12,14 @@ export function activate(context: vscode.ExtensionContext) {
   const statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left);
   statusBarItem.command = "traceback.setLogPath";
   statusBarItem.tooltip = "Click to change log file path";
-  
+
   // Add status bar item for Jaeger trace loading
   const jaegerStatusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left);
   jaegerStatusBarItem.command = "traceback.loadJaegerTrace";
   jaegerStatusBarItem.text = "$(globe) Load Jaeger Trace";
   jaegerStatusBarItem.tooltip = "Click to load a Jaeger trace from URL";
   jaegerStatusBarItem.show();
-  
+
   // Add status bar item for Axiom trace loading
   const axiomStatusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left);
   axiomStatusBarItem.command = "traceback.loadAxiomTrace";
@@ -42,14 +42,14 @@ export function activate(context: vscode.ExtensionContext) {
 
     statusBarItem.text = `$(file) Log: ${currentLogPath || "Not Set"}`;
     repoStatusBarItem.text = `$(repo) Repo: ${currentRepoPath || "Not Set"}`;
-    
+
     // Update Jaeger status bar
     if (currentJaegerTraceId) {
       jaegerStatusBarItem.text = `$(globe) Jaeger: ${currentJaegerTraceId}`;
     } else {
       jaegerStatusBarItem.text = `$(globe) Load Jaeger Trace`;
     }
-    
+
     // Update Axiom status bar
     if (currentAxiomTraceId) {
       axiomStatusBarItem.text = `$(server) Axiom: ${currentAxiomTraceId}`;
@@ -73,19 +73,19 @@ export function activate(context: vscode.ExtensionContext) {
     treeDataProvider: logExplorerProvider,
     showCollapseAll: false,
   });
-  
+
   // Create the variable decorator
   const variableDecorator = new VariableDecorator(context);
-  
+
   // Register the Variables view
   const variableExplorerProvider = registerVariableExplorer(context);
-  
+
   // Register the Call Stack view
   const callStackExplorerProvider = registerCallStackExplorer(context);
-  
+
   // Connect the Variables view with the decorator
   variableExplorerProvider.setVariableDecorator(variableDecorator);
-  
+
   // Associate the Variables and Call Stack views with the Logs view
   logExplorerProvider.setVariableExplorer(variableExplorerProvider);
   logExplorerProvider.setCallStackExplorer(callStackExplorerProvider);
@@ -180,29 +180,29 @@ export function activate(context: vscode.ExtensionContext) {
       callStackExplorerProvider.setLogEntry(undefined);
     }
   );
-  
+
   // Command to load a Jaeger trace from a URL
   const loadJaegerTraceCommand = vscode.commands.registerCommand(
     "traceback.loadJaegerTrace",
     async () => {
       // First, ask for Jaeger endpoint if not set
       let jaegerEndpoint = context.globalState.get<string>("jaegerEndpoint");
-      
+
       if (!jaegerEndpoint) {
         jaegerEndpoint = await vscode.window.showInputBox({
           prompt: "Enter Jaeger API endpoint (leave empty for default)",
           placeHolder: "http://localhost:8080/jaeger/ui/api/traces",
           value: "http://localhost:8080/jaeger/ui/api/traces"
         });
-        
+
         if (!jaegerEndpoint) {
           // User canceled or provided empty input, use default
           jaegerEndpoint = "http://localhost:8080/jaeger/ui/api/traces";
         }
-        
+
         await context.globalState.update("jaegerEndpoint", jaegerEndpoint);
       }
-      
+
       // Now ask for the trace ID
       const traceId = await vscode.window.showInputBox({
         prompt: "Enter Jaeger trace ID",
@@ -212,44 +212,44 @@ export function activate(context: vscode.ExtensionContext) {
           return value.trim() ? null : "Trace ID cannot be empty";
         }
       });
-      
+
       if (!traceId) {
         // User canceled
         return;
       }
-      
+
       // Construct the full URL
       const fullUrl = `${jaegerEndpoint}/${traceId}`;
-      
+
       // Store the trace ID
       await context.globalState.update("jaegerTraceId", traceId);
       await context.globalState.update("logFilePath", fullUrl);
-      
+
       // Update status bars and refresh logs
       updateStatusBars();
       logExplorerProvider.refresh();
-      
+
       // Show information message
       vscode.window.showInformationMessage(`Loading Jaeger trace: ${traceId}`);
     }
   );
-  
+
   // Command to change Jaeger endpoint
   const setJaegerEndpointCommand = vscode.commands.registerCommand(
     "traceback.setJaegerEndpoint",
     async () => {
       const currentEndpoint = context.globalState.get<string>("jaegerEndpoint") || "http://localhost:8080/jaeger/ui/api/traces";
-      
+
       const newEndpoint = await vscode.window.showInputBox({
         prompt: "Enter Jaeger API endpoint",
         placeHolder: "http://localhost:8080/jaeger/ui/api/traces",
         value: currentEndpoint
       });
-      
+
       if (newEndpoint) {
         await context.globalState.update("jaegerEndpoint", newEndpoint);
         vscode.window.showInformationMessage(`Jaeger endpoint set to: ${newEndpoint}`);
-        
+
         // If there's a trace ID loaded, refresh with the new endpoint
         const currentTraceId = context.globalState.get<string>("jaegerTraceId");
         if (currentTraceId) {
@@ -257,7 +257,7 @@ export function activate(context: vscode.ExtensionContext) {
           await context.globalState.update("logFilePath", fullUrl);
           logExplorerProvider.refresh();
         }
-        
+
         updateStatusBars();
       }
     }
@@ -275,7 +275,7 @@ export function activate(context: vscode.ExtensionContext) {
       await context.secrets.store("axiom-token", token);
     }
   );
-  
+
   // Command to get stored Axiom API token
   const getAxiomTokenCommand = vscode.commands.registerCommand(
     "traceback.getAxiomToken",
@@ -283,7 +283,7 @@ export function activate(context: vscode.ExtensionContext) {
       return context.secrets.get("axiom-token");
     }
   );
-  
+
   // Command to get Axiom dataset name
   const getAxiomDatasetCommand = vscode.commands.registerCommand(
     "traceback.getAxiomDataset",
@@ -291,7 +291,7 @@ export function activate(context: vscode.ExtensionContext) {
       return context.globalState.get<string>("axiomDataset") || "otel-demo-traces";
     }
   );
-  
+
   // Command to load an Axiom trace
   const loadAxiomTraceCommand = vscode.commands.registerCommand(
     "traceback.loadAxiomTrace",
@@ -305,48 +305,48 @@ export function activate(context: vscode.ExtensionContext) {
           return value.trim() ? null : "Trace ID cannot be empty";
         }
       });
-      
+
       if (!traceId) {
         // User canceled
         return;
       }
-      
+
       // Store the trace ID
       await context.globalState.update("axiomTraceId", traceId);
       await context.globalState.update("logFilePath", `axiom:${traceId}`);
-      
+
       // Update status bars and refresh logs
       updateStatusBars();
       logExplorerProvider.refresh();
-      
+
       // Show information message
       vscode.window.showInformationMessage(`Loading Axiom trace: ${traceId}`);
     }
   );
-  
+
   // Command to set Axiom dataset name
   const setAxiomDatasetCommand = vscode.commands.registerCommand(
     "traceback.setAxiomDataset",
     async () => {
       const currentDataset = context.globalState.get<string>("axiomDataset") || "otel-demo-traces";
-      
+
       const newDataset = await vscode.window.showInputBox({
         prompt: "Enter Axiom dataset name for traces",
         placeHolder: "otel-demo-traces",
         value: currentDataset
       });
-      
+
       if (newDataset) {
         await context.globalState.update("axiomDataset", newDataset);
         vscode.window.showInformationMessage(`Axiom dataset set to: ${newDataset}`);
-        
+
         // If there's a trace ID loaded, refresh with the new dataset
         const currentTraceId = context.globalState.get<string>("axiomTraceId");
         if (currentTraceId) {
           await context.globalState.update("logFilePath", `axiom:${currentTraceId}`);
           logExplorerProvider.refresh();
         }
-        
+
         updateStatusBars();
       }
     }

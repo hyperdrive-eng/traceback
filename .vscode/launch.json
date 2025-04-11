@@ -9,9 +9,16 @@
         "--extensionDevelopmentPath=${workspaceFolder}"
       ],
       "outFiles": [
-        "${workspaceFolder}/out/**/*.js"
+        "${workspaceFolder}/dist/**/*.js"
       ],
-      "preLaunchTask": "${defaultBuildTask}"
+      "sourceMaps": true,
+      "preLaunchTask": "npm: compile"
+    }
+  ],
+  "compounds": [
+    {
+      "name": "Extension with Compile",
+      "configurations": ["Run Extension"]
     }
   ]
 }
