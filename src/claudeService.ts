@@ -6,6 +6,24 @@ export interface LLMLogAnalysis {
     variables: Record<string, any>;
 }
 
+interface PotentialCaller {
+    filePath: string;
+    lineNumber: number;
+    code: string;
+    functionName: string;
+    functionRange?: vscode.Range;
+}
+
+export interface CallerAnalysis {
+    rankedCallers: Array<{
+        filePath: string;
+        lineNumber: number;
+        functionName: string;
+        confidence: number;
+        explanation: string;
+    }>;
+}
+
 export class ClaudeService {
     private static instance: ClaudeService;
     private apiKey: string | undefined;
@@ -41,6 +59,30 @@ export class ClaudeService {
         } catch (error) {
             console.error('Error calling Claude API:', error);
             throw new Error('Failed to analyze log message with Claude');
+        }
+    }
+
+    public async analyzeCallers(
+        currentLogLine: string,
+        staticSearchString: string,
+        allLogLines: string[],
+        potentialCallers: Array<{ filePath: string; lineNumber: number; code: string; functionName: string; functionRange?: vscode.Range }>
+    ): Promise<CallerAnalysis> {
+        if (!this.apiKey) {
+            throw new Error('Claude API key not set. Please set your API key first.');
+        }
+
+        try {
+            const response = await this.callClaudeForCallerAnalysis(
+                currentLogLine,
+                staticSearchString,
+                allLogLines,
+                potentialCallers
+            );
+            return response;
+        } catch (error) {
+            console.error('Error analyzing callers with Claude:', error);
+            throw new Error('Failed to analyze callers with Claude');
         }
     }
 
@@ -127,6 +169,129 @@ Use the analyze_log function to return the results in the exact format required.
                 throw new Error('Invalid response format from Claude API');
             }
             return (data.content[0].input) as LLMLogAnalysis;
+        } catch (error) {
+            console.error('Error calling Claude API:', error);
+            throw error;
+        }
+    }
+
+    private async callClaudeForCallerAnalysis(
+        currentLogLine: string,
+        staticSearchString: string,
+        allLogLines: string[],
+        potentialCallers: Array<{ filePath: string; lineNumber: number; code: string; functionName: string; }>
+    ): Promise<CallerAnalysis> {
+        const tools = [{
+            name: "analyze_callers",
+            description: "Analyze potential callers and rank them based on likelihood",
+            input_schema: {
+                type: "object",
+                properties: {
+                    logMessage: {
+                        type: "string",
+                        description: "The log message to analyze"
+                    },
+                    rankedCallers: {
+                        type: "array",
+                        items: {
+                            type: "object",
+                            properties: {
+                                filePath: {
+                                    type: "string",
+                                    description: "Path to the file containing the caller"
+                                },
+                                lineNumber: {
+                                    type: "number",
+                                    description: "Line number of the caller"
+                                },
+                                functionName: {
+                                    type: "string",
+                                    description: "Name of the calling function"
+                                },
+                                confidence: {
+                                    type: "number",
+                                    description: "Confidence score between 0 and 1"
+                                },
+                                explanation: {
+                                    type: "string",
+                                    description: "Explanation of why this caller is ranked at this position"
+                                }
+                            },
+                            required: ["filePath", "lineNumber", "functionName", "confidence", "explanation"]
+                        }
+                    }
+                },
+                required: ["logMessage", "rankedCallers"]
+            }
+        }];
+
+        const request = {
+            messages: [{
+                role: 'user',
+                content: `Analyze these potential callers and rank them based on likelihood of being the actual caller.
+
+Current log line: "${currentLogLine}"
+Static search string used: "${staticSearchString}"
+
+All log lines in current session:
+${allLogLines.map(log => `- ${log}`).join('\n')}
+
+Potential callers found in codebase:
+${potentialCallers.map(caller => `
+File: ${caller.filePath}
+Function: ${caller.functionName}
+Line ${caller.lineNumber}: ${caller.code}
+`).join('\n')}
+
+Rules for ranking:
+1. Consider the context from all log lines
+2. Look for patterns in function names and variable usage
+3. Consider the proximity of the code to related functionality
+4. Consider common logging patterns and practices
+5. Higher confidence for direct matches with the static search string
+6. Lower confidence for generic or utility functions that might just pass through the message
+
+Return a ranked list of callers, each with:
+- File path
+- Line number
+- Function name
+- Confidence score (0-1)
+- Explanation for the ranking
+
+Use the analyze_callers function to return the results in the exact format required.`
+            }],
+            model: this.model,
+            max_tokens: 4000,
+            tools: tools,
+            tool_choice: {
+                type: "tool",
+                name: "analyze_callers"
+            }
+        };
+
+        try {
+            const response = await fetch(this.apiEndpoint, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Api-Key': this.apiKey!,
+                    'anthropic-version': '2023-06-01'
+                },
+                body: JSON.stringify(request)
+            });
+
+            if (!response.ok) {
+                const errorText = await response.text();
+                throw new Error(`Claude API error: ${response.statusText}\nDetails: ${errorText}`);
+            }
+
+            const data = await response.json();
+
+            if (!data.content || !data.content[0] || !(data.content[0].type === 'tool_use')) {
+                throw new Error('Invalid response format: missing tool_calls');
+            }
+
+            return (data.content[0].input) as CallerAnalysis;
         } catch (error) {
             console.error('Error calling Claude API:', error);
             throw error;
