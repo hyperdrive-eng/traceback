@@ -4,12 +4,22 @@ A VS Code extension that brings telemetry data (traces, logs, and metrics) into 
 
 ## Get started
 
-1. Install extension
+1. Install TraceBack extension
     1. [Download](https://github.com/hyperdrive-eng/traceback/releases) latest `.vsix` 
     1. Install VSIX
-1. Open settings
+
+        <img src="https://github.com/user-attachments/assets/1b219565-cf72-4c4a-85a7-659796779803">
+
+1. Open TraceBack settings
+
+   <img src="https://github.com/user-attachments/assets/a25c776d-adc7-4f57-9f69-5c1ec2ff9cc0">
+
 1. Add a data source (local file, public URL, copy/paste, Axiom.co)
+
 1. Select a log from the sidebar
+
+    <img src="https://github.com/user-attachments/assets/9e5c942c-6d40-48ac-8d14-d94ac49c4f6c">
+
 
 ## Features
 
