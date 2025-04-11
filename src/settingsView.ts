@@ -289,16 +289,8 @@ export class SettingsView {
           margin-top: 20px;
           margin-bottom: 10px;
         }
-        .section {
-          margin-bottom: 30px;
-          padding: 15px;
-          background-color: var(--vscode-editor-background);
-          border-radius: 4px;
-        }
-        .subsection {
-          margin-top: 15px;
-          margin-bottom: 15px;
-          padding: 10px;
+        h3 {
+          margin-top: 25px;
         }
         label {
           display: block;
@@ -352,62 +344,74 @@ export class SettingsView {
         <h1>TraceBack Settings</h1>
       </header>
       
-      <h2>1. Data</h2>
+      <h2>Choose Data</h2>
       
-      <div class="section">
-        <h3>1.1 Local File</h3>
-        <div class="subsection">
-          <button id="selectFile">Select File</button>
-          <div class="current-setting" id="currentLogFile">
-            ${logFilePath ? `Current: ${logFilePath}` : 'No log file selected'}
-          </div>
+      <h3>Copy/Paste</h3>
+      <div>
+        <label for="logText">Paste log content:</label>
+        <div style="position: relative;">
+          <textarea id="logText" class="code-sample" placeholder="Paste logs here or use the copy button to copy example logs"></textarea>
+          <button id="copyLogsExample" style="position: absolute; top: 5px; right: 5px; background: transparent; padding: 4px;" title="Copy example logs">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M16 1H4C2.9 1 2 1.9 2 3V17H4V3H16V1ZM19 5H8C6.9 5 6 5.9 6 7V21C6 22.1 6.9 23 8 23H19C20.1 23 21 22.1 21 21V7C21 5.9 20.1 5 19 5ZM19 21H8V7H19V21Z" fill="currentColor"/>
+            </svg>
+          </button>
         </div>
-        
-        <h3>1.2 Public URL</h3>
-        <div class="subsection">
-          <label for="logUrl">Log URL:</label>
-          <input type="text" id="logUrl" placeholder="https://raw.githubusercontent.com/hyperdrive-eng/playground/refs/heads/main/logs/checkout.log">
-          <button id="loadUrl">Load URL</button>
+        <button id="loadText">Parse and Load</button>
+      </div>
+
+      <h3>Public URL</h3>
+      <div>
+        <label for="logUrl">Log URL:</label>
+        <div style="display: flex; align-items: center; width: 100%;">
+          <input type="text" id="logUrl" placeholder="https://raw.githubusercontent.com/hyperdrive-eng/playground/refs/heads/main/logs/checkout.log" style="flex-grow: 1; margin-bottom: 0;">
+          <button id="copyUrlExample" style="margin-left: 5px;" title="Copy example URL">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M16 1H4C2.9 1 2 1.9 2 3V17H4V3H16V1ZM19 5H8C6.9 5 6 5.9 6 7V21C6 22.1 6.9 23 8 23H19C20.1 23 21 22.1 21 21V7C21 5.9 20.1 5 19 5ZM19 21H8V7H19V21Z" fill="currentColor"/>
+            </svg>
+          </button>
         </div>
-        
-        <h3>1.3 Copy/Paste</h3>
-        <div class="subsection">
-          <label for="logText">Paste log content:</label>
-          <textarea id="logText" class="code-sample" placeholder="checkout  | {&quot;message&quot;:&quot;Initializing new client&quot;,&quot;severity&quot;:&quot;info&quot;,&quot;timestamp&quot;:&quot;2025-04-11T12:35:59.036299716Z&quot;}
-checkout  | {&quot;message&quot;:&quot;ClientID is the default of 'sarama', you should consider setting it to something application-specific.&quot;,&quot;severity&quot;:&quot;info&quot;,&quot;timestamp&quot;:&quot;2025-04-11T12:35:59.037147591Z&quot;}
-checkout  | {&quot;message&quot;:&quot;ClientID is the default of 'sarama', you should consider setting it to something application-specific.&quot;,&quot;severity&quot;:&quot;info&quot;,&quot;timestamp&quot;:&quot;2025-04-11T12:35:59.037198133Z&quot;}
-checkout  | {&quot;message&quot;:&quot;client/metadata fetching metadata for all topics from broker kafka:9092\\n&quot;,&quot;severity&quot;:&quot;info&quot;,&quot;timestamp&quot;:&quot;2025-04-11T12:35:59.039354508Z&quot;}
-checkout  | {&quot;message&quot;:&quot;Connected to broker at kafka:9092 (unregistered)\\n&quot;,&quot;severity&quot;:&quot;info&quot;,&quot;timestamp&quot;:&quot;2025-04-11T12:35:59.045927425Z&quot;}
-checkout  | {&quot;message&quot;:&quot;client/brokers registered new broker #1 at kafka:9092&quot;,&quot;severity&quot;:&quot;info&quot;,&quot;timestamp&quot;:&quot;2025-04-11T12:35:59.067391466Z&quot;}
-checkout  | {&quot;message&quot;:&quot;Successfully initialized new client&quot;,&quot;severity&quot;:&quot;info&quot;,&quot;timestamp&quot;:&quot;2025-04-11T12:35:59.067508841Z&quot;}
-checkout  | {&quot;message&quot;:&quot;service config: \\u0026{productCatalogSvcAddr:product-catalog:3550 cartSvcAddr:cart:7070 currencySvcAddr:currency:7001 shippingSvcAddr:shipping:50050 emailSvcAddr:http://email:6060 paymentSvcAddr:payment:50051 kafkaBrokerSvcAddr:kafka:9092 UnimplementedCheckoutServiceServer:{} KafkaProducerClient:0x400021c100 shippingSvcClient:0x4000402030 productCatalogSvcClient:0x4000402350 cartSvcClient:0x4000402670 currencySvcClient:0x4000402990 emailSvcClient:0x4000402cb0 paymentSvcClient:0x4000402fd0}&quot;,&quot;severity&quot;:&quot;info&quot;,&quot;timestamp&quot;:&quot;2025-04-11T12:35:59.067947175Z&quot;}"></textarea>
-          <button id="loadText">Parse and Load</button>
+        <div style="margin-top: 5px; margin-bottom: 10px; font-size: 12px; color: var(--vscode-descriptionForeground); display: flex; align-items: center;">
+          <span>Example:</span>
+          <a href="#" id="exampleUrlLink" style="margin-left: 5px; margin-right: 5px;">https://raw.githubusercontent.com/hyperdrive-eng/playground/refs/heads/main/logs/checkout.log</a>
+          <button id="copyExampleUrl" style="display: inline-flex; align-items: center; justify-content: center; padding: 2px; height: 18px; width: 18px; background: transparent; border: none;" title="Copy example URL">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M16 1H4C2.9 1 2 1.9 2 3V17H4V3H16V1ZM19 5H8C6.9 5 6 5.9 6 7V21C6 22.1 6.9 23 8 23H19C20.1 23 21 22.1 21 21V7C21 5.9 20.1 5 19 5ZM19 21H8V7H19V21Z" fill="currentColor"/>
+            </svg>
+          </button>
         </div>
-        
-        <h3>1.4 Axiom</h3>
-        <div class="subsection">
-          <label for="axiomApiKey">API Key:</label>
-          <input type="password" id="axiomApiKey" placeholder="xapt-01234567-89ab-cdef-0123-456789abcdef">
-          
-          <label for="axiomDataset">Dataset Name:</label>
-          <input type="text" id="axiomDataset" value="${axiomDataset}" placeholder="otel-demo-traces">
-          
-          <label for="axiomQuery">Trace ID:</label>
-          <input type="text" id="axiomQuery" placeholder="5bb959fd715610b1f395edcc344aba6b">
-          
-          <button id="saveAxiomSettings">Save Settings & Load Trace</button>
+        <button id="loadUrl">Load URL</button>
+      </div>
+
+      <h3>Local File</h3>
+      <div>
+        <button id="selectFile">Select File</button>
+        <div class="current-setting" id="currentLogFile">
+          ${logFilePath ? `Current: ${logFilePath}` : 'No log file selected'}
         </div>
       </div>
       
-      <h2>2. Repository</h2>
+      <h3>Axiom</h3>
+      <div>
+        <label for="axiomApiKey">API Key:</label>
+        <input type="password" id="axiomApiKey" placeholder="xapt-01234567-89ab-cdef-0123-456789abcdef">
+        
+        <label for="axiomDataset">Dataset Name:</label>
+        <input type="text" id="axiomDataset" value="${axiomDataset}" placeholder="otel-demo-traces">
+        
+        <label for="axiomQuery">Trace ID:</label>
+        <input type="text" id="axiomQuery" placeholder="5bb959fd715610b1f395edcc344aba6b">
+        
+        <button id="saveAxiomSettings">Save Settings & Load Trace</button>
+      </div>
       
-      <div class="section">
-        <h3>2.1 Local Repository</h3>
-        <div class="subsection">
-          <button id="selectRepo">Select Repository</button>
-          <div class="current-setting" id="currentRepoPath">
-            ${repoPath ? `Current: ${repoPath}` : 'No repository selected'}
-          </div>
+      <h2>Select Repository</h2>
+      
+      <h3>Local Repository</h3>
+      <div>
+        <button id="selectRepo">Select Repository</button>
+        <div class="current-setting" id="currentRepoPath">
+          ${repoPath ? `Current: ${repoPath}` : 'No repository selected'}
         </div>
       </div>
       
@@ -461,6 +465,51 @@ checkout  | {&quot;message&quot;:&quot;service config: \\u0026{productCatalogSvc
           }
         });
         
+        // Example URL and logs
+        const exampleUrl = 'https://raw.githubusercontent.com/hyperdrive-eng/playground/refs/heads/main/logs/checkout.log';
+        const exampleLogs = 'checkout  | {"message":"Initializing new client","severity":"info","timestamp":"2025-04-11T12:35:59.036299716Z"}\n' +
+'checkout  | {"message":"ClientID is the default of \'sarama\', you should consider setting it to something application-specific.","severity":"info","timestamp":"2025-04-11T12:35:59.037147591Z"}\n' +
+'checkout  | {"message":"ClientID is the default of \'sarama\', you should consider setting it to something application-specific.","severity":"info","timestamp":"2025-04-11T12:35:59.037198133Z"}\n' +
+'checkout  | {"message":"client/metadata fetching metadata for all topics from broker kafka:9092\\n","severity":"info","timestamp":"2025-04-11T12:35:59.039354508Z"}\n' +
+'checkout  | {"message":"Connected to broker at kafka:9092 (unregistered)\\n","severity":"info","timestamp":"2025-04-11T12:35:59.045927425Z"}\n' +
+'checkout  | {"message":"client/brokers registered new broker #1 at kafka:9092","severity":"info","timestamp":"2025-04-11T12:35:59.067391466Z"}\n' +
+'checkout  | {"message":"Successfully initialized new client","severity":"info","timestamp":"2025-04-11T12:35:59.067508841Z"}\n' +
+'checkout  | {"message":"service config: \\u0026{productCatalogSvcAddr:product-catalog:3550 cartSvcAddr:cart:7070 currencySvcAddr:currency:7001 shippingSvcAddr:shipping:50050 emailSvcAddr:http://email:6060 paymentSvcAddr:payment:50051 kafkaBrokerSvcAddr:kafka:9092 UnimplementedCheckoutServiceServer:{} KafkaProducerClient:0x400021c100 shippingSvcClient:0x4000402030 productCatalogSvcClient:0x4000402350 cartSvcClient:0x4000402670 currencySvcClient:0x4000402990 emailSvcClient:0x4000402cb0 paymentSvcClient:0x4000402fd0}","severity":"info","timestamp":"2025-04-11T12:35:59.067947175Z"}\n' +
+'checkout  | {"message":"starting to listen on tcp: \\"[::]:5050\\"","severity":"info","timestamp":"2025-04-11T12:35:59.069136633Z"}\n' +
+'checkout  | {"message":"[PlaceOrder] user_id=\\"9d7e2a1c-16d1-11f0-9eeb-0242ac120019\\" user_currency=\\"USD\\"","severity":"info","timestamp":"2025-04-11T12:36:39.507327138Z"}\n' +
+'checkout  | {"message":"payment went through (transaction_id: 7b28d895-918c-4961-b72e-cb108aa356dc)","severity":"info","timestamp":"2025-04-11T12:36:39.610940596Z"}\n' +
+'checkout  | {"message":"order confirmation email sent to \\"reed@example.com\\"","severity":"info","timestamp":"2025-04-11T12:36:39.728697055Z"}\n' +
+'checkout  | {"message":"sending to postProcessor","severity":"info","timestamp":"2025-04-11T12:36:39.728720096Z"}\n' +
+'checkout  | {"message":"Message sent to Kafka: {orders \\u003cnil\\u003e [10 36 57 100 56 51 49 50 98 57 45 49 54 100 49 45 49 49 102 48 45 97 100 57 50 45 48 50 52 50 97 99 49 50 48 48 49 53 18 36 52 52 56 98 97 53 52 53 45 57 97 49 100 45 52 54 52 100 45 56 51 98 99 45 100 48 99 57 101 49 101 99 101 48 102 57 26 14 10 3 85 83 68 16 183 2 24 128 202 181 238 1 34 60 10 21 49 48 48 32 87 105 110 99 104 101 115 116 101 114 32 67 105 114 99 108 101 18 9 76 111 115 32 71 97 116 111 115 26 2 67 65 34 13 85 110 105 116 101 100 32 83 116 97 116 101 115 42 5 57 53 48 51 50 42 31 10 14 10 10 79 76 74 67 69 83 80 67 55 90 16 5 18 13 10 3 85 83 68 16 101 24 255 223 225 201 3] [{[116 114 97 99 101 112 97 114 101 110 116] [48 48 45 48 53 52 97 100 56 48 54 102 101 55 48 50 54 98 54 54 51 101 99 57 51 97 57 102 54 51 51 48 50 49 100 45 55 54 48 101 54 98 56 55 101 49 50 56 57 101 55 52 45 48 49]} {[98 97 103 103 97 103 101] [115 101 115 115 105 111 110 46 105 100 61 48 50 54 99 101 57 53 100 45 98 101 101 97 45 52 101 50 102 45 56 102 100 97 45 50 100 54 57 48 97 49 56 102 101 48 49 44 115 121 110 116 104 101 116 105 99 95 114 101 113 117 101 115 116 61 116 114 117 101]}] \\u003cnil\\u003e 0 0 0001-01-01 00:00:00 +0000 UTC 0 0 \\u003cnil\\u003e 0 0 false}","severity":"info","timestamp":"2025-04-11T12:36:39.728882346Z"}\n' +
+'checkout  | {"message":"ClientID is the default of \'sarama\', you should consider setting it to something application-specific.","severity":"info","timestamp":"2025-04-11T12:36:39.731395555Z"}';
+
+        // Example URL link and copy buttons
+        document.getElementById('exampleUrlLink').addEventListener('click', (e) => {
+          e.preventDefault();
+          document.getElementById('logUrl').value = exampleUrl;
+        });
+
+        document.getElementById('copyUrlExample').addEventListener('click', () => {
+          navigator.clipboard.writeText(exampleUrl).then(() => {
+            document.getElementById('logUrl').value = exampleUrl;
+            showStatus('Example URL copied to clipboard');
+          });
+        });
+        
+        document.getElementById('copyExampleUrl').addEventListener('click', () => {
+          navigator.clipboard.writeText(exampleUrl).then(() => {
+            document.getElementById('logUrl').value = exampleUrl;
+            showStatus('Example URL copied to clipboard');
+          });
+        });
+
+        document.getElementById('copyLogsExample').addEventListener('click', () => {
+          navigator.clipboard.writeText(exampleLogs).then(() => {
+            document.getElementById('logText').value = exampleLogs;
+            showStatus('Example logs copied to clipboard');
+          });
+        });
+
         // Handle messages from the extension
         window.addEventListener('message', event => {
           const message = event.data;
