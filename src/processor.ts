@@ -479,6 +479,9 @@ export async function loadLogs(logPathOrUrl: string): Promise<LogEntry[]> {
             }
 
             rawContent = await response.text();
+            
+            // Store the URL as the last successful URL
+            await vscode.commands.executeCommand('setContext', 'traceback.lastSuccessfulUrl', logPathOrUrl);
           } catch (error: any) {
             vscode.window.showErrorMessage(`Error fetching logs: ${error.message}`);
             return [];

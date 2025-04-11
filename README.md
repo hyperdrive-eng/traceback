@@ -1,9 +1,15 @@
 # TraceBack
 
-> [!WARNING]  
-> This extension is in **beta**. Not all features are available.
-
 A VS Code extension that brings telemetry data (traces, logs, and metrics) into your code.
+
+## Get started
+
+1. Install extension
+    1. [Download](https://github.com/hyperdrive-eng/traceback/releases) latest `.vsix` 
+    1. Install VSIX
+1. Open settings
+1. Add a data source (local file, public URL, copy/paste, Axiom.co)
+1. Select a log from the sidebar
 
 ## Features
 
@@ -11,19 +17,6 @@ A VS Code extension that brings telemetry data (traces, logs, and metrics) into 
 - View variable values next to their declarations
 - Navigate code execution by clicking on telemetry entries
 
-## Requirements
-
-- Have an [Axiom.co](https://axiom.co) account
-- Have an Axiom API key with `Query` access to your Axiom dataset
-
-## Usage
-
-1. Install the TraceBack extension
-2. Open the TraceBack extension from the VS Code activity bar
-3. Paste your Axiom `API key`
-4. Paste a `trace ID` from your Axiom dataset
-5. Click on any telemetry entry to see the details
-6. The relevant code will be highlighted
 
 ## Development
 
