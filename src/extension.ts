@@ -331,6 +331,13 @@ export function activate(context: vscode.ExtensionContext) {
     }
   );
 
+  const openCallStackLocationCommand = vscode.commands.registerCommand(
+    'traceback.openCallStackLocation',
+    (caller, treeItem) => {
+      callStackExplorerProvider.openCallStackLocation(caller, treeItem);
+    }
+  );
+
   context.subscriptions.push(
     treeView,
     refreshCommand,
@@ -349,6 +356,7 @@ export function activate(context: vscode.ExtensionContext) {
     getAxiomDatasetCommand,
     registerLogParserCommand,
     openSettingsCommand,
+    openCallStackLocationCommand,
     vscode.commands.registerCommand('traceback.pinLog', (item: LogTreeItem) => {
       const log = item.getLogEntry();
       pinnedLogsProvider.pinLog(log);

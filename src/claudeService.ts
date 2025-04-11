@@ -29,10 +29,10 @@ export class ClaudeService {
     private static instance: ClaudeService;
     private apiKey: string | undefined;
     private apiEndpoint: string = 'https://api.anthropic.com/v1/messages';
-    
+
     // Use different models for different tasks
     private analysisModel: string = 'claude-3-haiku-20240307'; // Fast model for simple analysis
-    private callerModel: string = 'claude-3-opus-20240229';    // Full model for complex caller analysis
+    private callerModel: string = 'claude-3-7-sonnet-20250219';  // Use Sonnet for better balance of speed and quality
 
     private constructor() {
         // Load API key from workspace state if available

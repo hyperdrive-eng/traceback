@@ -147,9 +147,9 @@ export class LogExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
   private currentDecorations: vscode.TextEditorDecorationType[] = [];
   private sortByTime: boolean = true;
   private selectedLogLevels: Set<string> = new Set(['INFO', 'DEBUG', 'WARNING', 'ERROR']);
-  private variableExplorerProvider: { setLog: (log: LogEntry | undefined) => void } | undefined;
+  private variableExplorerProvider: { setLog: (log: LogEntry | undefined, isAnalyzing?: boolean) => void } | undefined;
   private callStackExplorerProvider: { 
-    setLogEntry: (log: LogEntry | undefined) => void, 
+    setLogEntry: (log: LogEntry | undefined, isAnalyzing?: boolean) => void, 
     findPotentialCallers: (sourceFile: string, lineNumber: number) => Promise<Array<{ filePath: string; lineNumber: number; code: string; functionName: string; functionRange?: vscode.Range }>>, 
     analyzeCallers: (currentLogLine: string, staticSearchString: string, allLogs: LogEntry[], potentialCallers: Array<{ filePath: string; lineNumber: number; code: string; functionName: string; functionRange?: vscode.Range }>) => Promise<void>,
     getCallStackAnalysis: () => CallerAnalysis,
@@ -196,7 +196,7 @@ export class LogExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
   /**
    * Set the variable explorer provider to update when logs are selected
    */
-  public setVariableExplorer(provider: { setLog: (log: LogEntry | undefined) => void }): void {
+  public setVariableExplorer(provider: { setLog: (log: LogEntry | undefined, isAnalyzing?: boolean) => void }): void {
     this.variableExplorerProvider = provider;
   }
 
@@ -204,7 +204,7 @@ export class LogExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
    * Set the call stack explorer provider to update when logs are selected
    */
   public setCallStackExplorer(provider: { 
-    setLogEntry: (log: LogEntry | undefined) => void, 
+    setLogEntry: (log: LogEntry | undefined, isAnalyzing?: boolean) => void, 
     findPotentialCallers: (sourceFile: string, lineNumber: number) => Promise<Array<{ filePath: string; lineNumber: number; code: string; functionName: string; functionRange?: vscode.Range }>>, 
     analyzeCallers: (currentLogLine: string, staticSearchString: string, allLogs: LogEntry[], potentialCallers: Array<{ filePath: string; lineNumber: number; code: string; functionName: string; functionRange?: vscode.Range }>) => Promise<void>,
     getCallStackAnalysis: () => CallerAnalysis,
@@ -440,7 +440,8 @@ export class LogExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
         
         // Update the variable and call stack explorers with the selected log
         if (this.variableExplorerProvider) {
-          this.variableExplorerProvider.setLog(log);
+          // Only show loading state if we need to analyze
+          this.variableExplorerProvider.setLog(log, !log.claudeAnalysis);
         }
         
         if (this.callStackExplorerProvider) {
@@ -455,6 +456,10 @@ export class LogExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
           progress.report({ message: 'Analyzing log with Claude...' });
           analysis = await this.claudeService.analyzeLog(logMessage);
           log.claudeAnalysis = analysis;
+          // Refresh variable explorer after analysis is complete
+          if (this.variableExplorerProvider) {
+            this.variableExplorerProvider.setLog(log, false);
+          }
         }
         
         // Get repository root path
@@ -542,6 +547,9 @@ export class LogExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
       }, async () => {
         const repoPath = this.context.globalState.get<string>('repoPath');
         if (!repoPath || !this.callStackExplorerProvider) return;
+
+        // Set analyzing state before starting analysis
+        this.callStackExplorerProvider.setLogEntry(log, true);
 
         const potentialCallers = await this.callStackExplorerProvider.findPotentialCallers(
           path.join(repoPath, sourceFile),

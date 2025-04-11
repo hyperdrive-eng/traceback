@@ -119,14 +119,16 @@ export class VariableExplorerProvider implements vscode.TreeDataProvider<Variabl
   
   private currentLog: LogEntry | undefined;
   private variableDecorator: any; // Will be set from extension.ts
+  private isAnalyzing: boolean = false;
   
   constructor(private context: vscode.ExtensionContext) {}
   
   /**
    * Set the current log and refresh the view
    */
-  public setLog(log: LogEntry | undefined): void {
+  public setLog(log: LogEntry | undefined, isAnalyzing: boolean = false): void {
     this.currentLog = log;
+    this.isAnalyzing = isAnalyzing;
     this._onDidChangeTreeData.fire();
   }
   
@@ -170,6 +172,17 @@ export class VariableExplorerProvider implements vscode.TreeDataProvider<Variabl
         new VariableItem(
           'No log selected',
           'Click on a log in the Log Explorer view',
+          'message',
+          vscode.TreeItemCollapsibleState.None
+        )
+      ]);
+    }
+    
+    if (this.isAnalyzing) {
+      return Promise.resolve([
+        new VariableItem(
+          '$(sync~spin) Analyzing variables...',
+          'Please wait while we analyze the log',
           'message',
           vscode.TreeItemCollapsibleState.None
         )

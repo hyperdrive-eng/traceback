@@ -4,31 +4,47 @@ import { CallerAnalysis } from './claudeService';
 import { ClaudeService } from './claudeService';
 import * as path from 'path';
 
+interface CallerNode {
+  filePath: string;
+  lineNumber: number;
+  code: string;
+  functionName: string;
+  confidence: number;
+  explanation: string;
+  children?: CallerNode[];
+  isLoading?: boolean;
+}
+
 /**
  * TreeItem for call stack entries in the Call Stack Explorer
  */
 export class CallStackTreeItem extends vscode.TreeItem {
   constructor(
-    public readonly span: Span,
-    public readonly index: number,
-    public readonly collapsibleState: vscode.TreeItemCollapsibleState
+    public readonly caller: CallerNode,
+    public readonly provider: CallStackExplorerProvider,
+    public readonly isExpanded: boolean = false
   ) {
-    // Use span name as the primary label
-    super(span.name, collapsibleState);
+    super(
+      caller.filePath ? `${path.basename(caller.filePath)}:${caller.lineNumber + 1}` : caller.code,
+      caller.isLoading ? vscode.TreeItemCollapsibleState.None : 
+        caller.children || isExpanded ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.Collapsed
+    );
 
-    // Mark as root when appropriate
-    this.description = '';
+    this.description = caller.confidence ? `(${Math.round(caller.confidence * 100)}% confidence)` : '';
+    this.tooltip = caller.explanation || caller.code;
+    this.iconPath = new vscode.ThemeIcon(
+      caller.confidence > 0.7 ? 'debug-stackframe-focused' : 'debug-stackframe'
+    );
+    
+    this.command = {
+      command: 'traceback.openCallStackLocation',
+      title: 'Open File',
+      arguments: [caller, this]
+    };
 
-    // All spans are shown with standard stack frame icon
-    this.iconPath = new vscode.ThemeIcon('debug-stackframe');
-
-    // Tooltip with all span properties
-    this.tooltip = Object.entries(span)
-      .map(([key, value]) => `${key}: ${typeof value === 'object' ? JSON.stringify(value, null, 2) : value}`)
-      .join('\n');
-
-    // Set context for menu contributions
-    this.contextValue = index === 0 ? 'rootSpan' : 'span';
+    if (caller.isLoading) {
+      this.description = '$(sync~spin) Analyzing...';
+    }
   }
 }
 
@@ -53,69 +69,25 @@ export class SpanDetailItem extends vscode.TreeItem {
 /**
  * Tree data provider for the Call Stack Explorer view
  */
-export class CallStackExplorerProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
-  private _onDidChangeTreeData: vscode.EventEmitter<vscode.TreeItem | undefined | null | void> =
-    new vscode.EventEmitter<vscode.TreeItem | undefined | null | void>();
+export class CallStackExplorerProvider implements vscode.TreeDataProvider<CallStackTreeItem> {
+  private _onDidChangeTreeData: vscode.EventEmitter<CallStackTreeItem | undefined | null | void> = 
+    new vscode.EventEmitter<CallStackTreeItem | undefined | null | void>();
+  readonly onDidChangeTreeData: vscode.Event<CallStackTreeItem | undefined | null | void> = this._onDidChangeTreeData.event;
 
-  readonly onDidChangeTreeData: vscode.Event<vscode.TreeItem | undefined | null | void> =
-    this._onDidChangeTreeData.event;
-
-  private spans: Span[] = [];
   private currentLogEntry: LogEntry | undefined;
-  private callerAnalysis: CallerAnalysis = { rankedCallers: [] };
+  private callerAnalysis: CallerNode[] = [];
   private claudeService: ClaudeService = ClaudeService.getInstance();
+  private isAnalyzing: boolean = false;
 
   constructor(private context: vscode.ExtensionContext) {}
 
   /**
    * Set the spans for the current log entry and refresh the view
    */
-  public setLogEntry(logEntry: LogEntry | undefined): void {
-    this.currentLogEntry = logEntry;
-
-    // Reset spans
-    this.spans = [];
-
-    if (logEntry) {
-      // Case 1: Handle Jaeger spans
-      if (logEntry.jaegerSpan) {
-        // Build call stack from the references
-        const spanId = logEntry.jaegerSpan.spanID;
-        const parentSpanID = logEntry.parentSpanID;
-
-        // Start with the current span
-        const currentSpan: Span = {
-          name: logEntry.jaegerSpan.operationName,
-          span_id: spanId,
-          parent_id: parentSpanID,
-          service: logEntry.serviceName
-        };
-
-        // Add any additional properties from tags
-        logEntry.jaegerSpan.tags.forEach(tag => {
-          currentSpan[tag.key] = tag.value;
-        });
-
-        this.spans.push(currentSpan);
-
-        // If we have a parent relation, add a parent span too
-        if (parentSpanID) {
-          const parentSpan: Span = {
-            name: 'Parent Span',
-            span_id: parentSpanID,
-            service: logEntry.serviceName // Assume same service
-          };
-
-          this.spans.push(parentSpan);
-        }
-      }
-      // Case 2: Regular spans from jsonPayload
-      else if (logEntry.jsonPayload?.spans && logEntry.jsonPayload.spans.length > 0) {
-        // Reverse the spans so the stack shows in correct order (root at top, current at bottom)
-        this.spans = [...logEntry.jsonPayload.spans].reverse();
-      }
-    }
-
+  public setLogEntry(log: LogEntry | undefined, isAnalyzing: boolean = false): void {
+    this.currentLogEntry = log;
+    this.callerAnalysis = [];
+    this.isAnalyzing = isAnalyzing;
     this._onDidChangeTreeData.fire();
   }
 
@@ -123,8 +95,26 @@ export class CallStackExplorerProvider implements vscode.TreeDataProvider<vscode
    * Clear the call stack
    */
   public clearCallStack(): void {
-    this.spans = [];
+    this.callerAnalysis = [];
     this.currentLogEntry = undefined;
+    this._onDidChangeTreeData.fire();
+  }
+
+  public getCallStackAnalysis(): CallerAnalysis {
+    return {
+      rankedCallers: this.callerAnalysis.map(caller => ({
+        filePath: caller.filePath,
+        lineNumber: caller.lineNumber,
+        code: caller.code,
+        functionName: caller.functionName,
+        confidence: caller.confidence,
+        explanation: caller.explanation
+      }))
+    };
+  }
+
+  public setCallStackAnalysisFromCache(analysis: CallerNode[]): void {
+    this.callerAnalysis = analysis;
     this._onDidChangeTreeData.fire();
   }
 
@@ -403,6 +393,10 @@ export class CallStackExplorerProvider implements vscode.TreeDataProvider<vscode
     potentialCallers: Array<{ filePath: string; lineNumber: number; code: string; functionName: string; functionRange?: vscode.Range }>
   ): Promise<void> {
     try {
+      this.isAnalyzing = true;
+      this._onDidChangeTreeData.fire();
+      
+      vscode.window.showInformationMessage('Computing call stack analysis...');
       const allLogLines = allLogs.map(log =>
         log.message ||
         log.jsonPayload?.fields?.message ||
@@ -410,87 +404,148 @@ export class CallStackExplorerProvider implements vscode.TreeDataProvider<vscode
         ''
       ).filter(msg => msg);
 
-      this.callerAnalysis = await this.claudeService.analyzeCallers(
+      const analysis = await this.claudeService.analyzeCallers(
         currentLogLine,
         staticSearchString,
         allLogLines,
         potentialCallers
       );
 
+      // Convert to CallerNode structure
+      this.callerAnalysis = analysis.rankedCallers.map(rc => ({
+        filePath: rc.filePath,
+        lineNumber: rc.lineNumber,
+        code: rc.code,
+        functionName: rc.functionName,
+        confidence: rc.confidence,
+        explanation: rc.explanation
+      }));
+
+      vscode.window.showInformationMessage('Call stack analysis complete');
+      this.isAnalyzing = false;
       this._onDidChangeTreeData.fire();
     } catch (error) {
       console.error('Error analyzing callers:', error);
       vscode.window.showErrorMessage('Failed to analyze potential callers');
+      this.isAnalyzing = false;
+      this._onDidChangeTreeData.fire();
     }
   }
 
   /**
    * Get the tree item for a given element
    */
-  getTreeItem(element: vscode.TreeItem): vscode.TreeItem {
+  getTreeItem(element: CallStackTreeItem): CallStackTreeItem {
     return element;
   }
 
   /**
    * Get children for a given element
    */
-  getChildren(element?: vscode.TreeItem): Thenable<vscode.TreeItem[]> {
-    if (!this.currentLogEntry) {
-      return Promise.resolve([
-        new vscode.TreeItem('No log selected', vscode.TreeItemCollapsibleState.None)
-      ]);
+  async getChildren(element?: CallStackTreeItem): Promise<CallStackTreeItem[]> {
+    if (!this.currentLogEntry && !element) {
+      return [new CallStackTreeItem({
+        filePath: '',
+        lineNumber: 0,
+        code: 'No log selected',
+        functionName: '',
+        confidence: 0,
+        explanation: ''
+      }, this)];
+    }
+
+    if (this.isAnalyzing && !element) {
+      return [new CallStackTreeItem({
+        filePath: '',
+        lineNumber: 0,
+        code: 'Computing call stack analysis...',
+        functionName: '',
+        confidence: 0,
+        explanation: 'Please wait while we analyze the call stack'
+      }, this)];
     }
 
     if (!element) {
-      const items: vscode.TreeItem[] = [];
-
-      if (this.callerAnalysis?.rankedCallers.length) {
-        items.push(...this.callerAnalysis.rankedCallers.map(caller => {
-          const item = new vscode.TreeItem(
-            `${path.basename(caller.filePath)}:${caller.lineNumber}`,
-            vscode.TreeItemCollapsibleState.Expanded
-          );
-          item.description = `(${Math.round(caller.confidence * 100)}% confidence)`;
-          item.tooltip = caller.explanation;
-          item.iconPath = new vscode.ThemeIcon(
-            caller.confidence > 0.7 ? 'debug-stackframe-focused' : 'debug-stackframe'
-          );
-          item.command = {
-            command: 'vscode.open',
-            title: 'Open File',
-            arguments: [
-              vscode.Uri.file(caller.filePath),
-              { selection: new vscode.Range(caller.lineNumber, 0, caller.lineNumber, 0) }
-            ]
-          };
-          return item;
-        }));
-      }
-
-      return Promise.resolve(items);
+      // Root level - show initial callers
+      return this.callerAnalysis.map(caller => new CallStackTreeItem(caller, this, true));
     }
 
-    return Promise.resolve([]);
+    // Return children if they exist
+    return (element.caller.children || []).map(child => new CallStackTreeItem(child, this, true));
   }
 
-  // Add method to get current analysis
-  public getCallStackAnalysis() {
-    return this.callerAnalysis;
-  }
+  public async openCallStackLocation(
+    caller: CallerNode,
+    treeItem: CallStackTreeItem
+  ): Promise<void> {
+    try {
+      // Open the file and reveal the line
+      const document = await vscode.workspace.openTextDocument(caller.filePath);
+      const editor = await vscode.window.showTextDocument(document);
+      const range = new vscode.Range(
+        caller.lineNumber,
+        0,
+        caller.lineNumber,
+        document.lineAt(caller.lineNumber).text.length
+      );
+      editor.revealRange(range, vscode.TextEditorRevealType.InCenter);
 
-  // Add method to set analysis from cache
-  public setCallStackAnalysisFromCache(rankedCallers: Array<{
-    filePath: string;
-    lineNumber: number;
-    code: string;
-    functionName: string;
-    confidence: number;
-    explanation: string;
-  }>) {
-    this.callerAnalysis = {
-      rankedCallers
-    };
-    this._onDidChangeTreeData.fire();
+      // If children haven't been analyzed yet, do it now
+      if (!caller.children && !caller.isLoading) {
+        // Mark as loading
+        caller.isLoading = true;
+        this._onDidChangeTreeData.fire(treeItem);
+
+        vscode.window.showInformationMessage('Finding potential callers...');
+        // Find potential callers for this location
+        const potentialCallers = await this.findPotentialCallers(
+          caller.filePath,
+          caller.lineNumber
+        );
+
+        if (potentialCallers.length > 0) {
+          vscode.window.showInformationMessage('Analyzing call locations...');
+          // Get the code content for analysis
+          const lineText = document.lineAt(caller.lineNumber).text;
+          
+          // Analyze callers
+          const analysis = await this.claudeService.analyzeCallers(
+            lineText,
+            lineText, // Use the actual line as static search string since we're looking at code
+            [], // Empty log lines since we're analyzing code
+            potentialCallers
+          );
+
+          // Update the caller's children
+          caller.children = analysis.rankedCallers.map(rc => ({
+            filePath: rc.filePath,
+            lineNumber: rc.lineNumber,
+            code: rc.code,
+            functionName: rc.functionName,
+            confidence: rc.confidence,
+            explanation: rc.explanation
+          }));
+          vscode.window.showInformationMessage('Call location analysis complete');
+        } else {
+          caller.children = []; // Empty array to indicate analysis is complete
+          vscode.window.showInformationMessage('No potential callers found');
+        }
+
+        // Clear loading state
+        caller.isLoading = false;
+        this._onDidChangeTreeData.fire(treeItem);
+      }
+    } catch (error) {
+      console.error('Error in openCallStackLocation:', error);
+      vscode.window.showErrorMessage('Failed to analyze call stack location');
+      
+      // Clear loading state on error
+      if (caller.isLoading) {
+        caller.isLoading = false;
+        caller.children = [];
+        this._onDidChangeTreeData.fire(treeItem);
+      }
+    }
   }
 }
 
