@@ -349,45 +349,34 @@ export class SettingsView {
       <h3>Copy/Paste</h3>
       <div>
         <label for="logText">Paste log content:</label>
-        <div style="position: relative;">
-          <textarea id="logText" class="code-sample" placeholder="Paste logs here or use the copy button to copy example logs"></textarea>
-          <button id="copyLogsExample" style="position: absolute; top: 5px; right: 5px; background: transparent; padding: 4px;" title="Copy example logs">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <path d="M16 1H4C2.9 1 2 1.9 2 3V17H4V3H16V1ZM19 5H8C6.9 5 6 5.9 6 7V21C6 22.1 6.9 23 8 23H19C20.1 23 21 22.1 21 21V7C21 5.9 20.1 5 19 5ZM19 21H8V7H19V21Z" fill="currentColor"/>
-            </svg>
-          </button>
+        <textarea id="logText" class="code-sample" placeholder="Paste logs here. You can find example logs at the example URL above."></textarea>
+        <div style="display: flex; align-items: center; gap: 10px;">
+          <button id="loadText">Parse and Load</button>
+          <span style="font-size: 12px; color: var(--vscode-descriptionForeground);">
+            Example logs: https://raw.githubusercontent.com/hyperdrive-eng/playground/refs/heads/main/logs/checkout.log
+          </span>
         </div>
-        <button id="loadText">Parse and Load</button>
       </div>
 
       <h3>Public URL</h3>
       <div>
         <label for="logUrl">Log URL:</label>
-        <div style="display: flex; align-items: center; width: 100%;">
-          <input type="text" id="logUrl" placeholder="https://raw.githubusercontent.com/hyperdrive-eng/playground/refs/heads/main/logs/checkout.log" style="flex-grow: 1; margin-bottom: 0;">
-          <button id="copyUrlExample" style="margin-left: 5px;" title="Copy example URL">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <path d="M16 1H4C2.9 1 2 1.9 2 3V17H4V3H16V1ZM19 5H8C6.9 5 6 5.9 6 7V21C6 22.1 6.9 23 8 23H19C20.1 23 21 22.1 21 21V7C21 5.9 20.1 5 19 5ZM19 21H8V7H19V21Z" fill="currentColor"/>
-            </svg>
-          </button>
+        <input type="text" id="logUrl" placeholder="Enter URL to log file" style="width: 100%;">
+        <div style="display: flex; align-items: center; gap: 10px; margin-top: 5px;">
+          <button id="loadUrl">Load URL</button>
+          <span style="font-size: 12px; color: var(--vscode-descriptionForeground);">
+            Example URL: https://raw.githubusercontent.com/hyperdrive-eng/playground/refs/heads/main/logs/checkout.log
+          </span>
         </div>
-        <div style="margin-top: 5px; margin-bottom: 10px; font-size: 12px; color: var(--vscode-descriptionForeground); display: flex; align-items: center;">
-          <span>Example:</span>
-          <a href="#" id="exampleUrlLink" style="margin-left: 5px; margin-right: 5px;">https://raw.githubusercontent.com/hyperdrive-eng/playground/refs/heads/main/logs/checkout.log</a>
-          <button id="copyExampleUrl" style="display: inline-flex; align-items: center; justify-content: center; padding: 2px; height: 18px; width: 18px; background: transparent; border: none;" title="Copy example URL">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <path d="M16 1H4C2.9 1 2 1.9 2 3V17H4V3H16V1ZM19 5H8C6.9 5 6 5.9 6 7V21C6 22.1 6.9 23 8 23H19C20.1 23 21 22.1 21 21V7C21 5.9 20.1 5 19 5ZM19 21H8V7H19V21Z" fill="currentColor"/>
-            </svg>
-          </button>
-        </div>
-        <button id="loadUrl">Load URL</button>
       </div>
 
       <h3>Local File</h3>
       <div>
-        <button id="selectFile">Select File</button>
-        <div class="current-setting" id="currentLogFile">
-          ${logFilePath ? `Current: ${logFilePath}` : 'No log file selected'}
+        <div style="display: flex; align-items: center; gap: 10px;">
+          <button id="selectFile">Select File</button>
+          <span class="current-setting" id="currentLogFile">
+            ${logFilePath ? `Current: ${logFilePath}` : 'No log file selected'}
+          </span>
         </div>
       </div>
       
@@ -409,9 +398,11 @@ export class SettingsView {
       
       <h3>Local Repository</h3>
       <div>
-        <button id="selectRepo">Select Repository</button>
-        <div class="current-setting" id="currentRepoPath">
-          ${repoPath ? `Current: ${repoPath}` : 'No repository selected'}
+        <div style="display: flex; align-items: center; gap: 10px;">
+          <button id="selectRepo">Select Repository</button>
+          <span class="current-setting" id="currentRepoPath">
+            ${repoPath ? `Current: ${repoPath}` : 'No repository selected'}
+          </span>
         </div>
       </div>
       
@@ -484,31 +475,7 @@ export class SettingsView {
 'checkout  | {"message":"ClientID is the default of \'sarama\', you should consider setting it to something application-specific.","severity":"info","timestamp":"2025-04-11T12:36:39.731395555Z"}';
 
         // Example URL link and copy buttons
-        document.getElementById('exampleUrlLink').addEventListener('click', (e) => {
-          e.preventDefault();
-          document.getElementById('logUrl').value = exampleUrl;
-        });
-
-        document.getElementById('copyUrlExample').addEventListener('click', () => {
-          navigator.clipboard.writeText(exampleUrl).then(() => {
-            document.getElementById('logUrl').value = exampleUrl;
-            showStatus('Example URL copied to clipboard');
-          });
-        });
-        
-        document.getElementById('copyExampleUrl').addEventListener('click', () => {
-          navigator.clipboard.writeText(exampleUrl).then(() => {
-            document.getElementById('logUrl').value = exampleUrl;
-            showStatus('Example URL copied to clipboard');
-          });
-        });
-
-        document.getElementById('copyLogsExample').addEventListener('click', () => {
-          navigator.clipboard.writeText(exampleLogs).then(() => {
-            document.getElementById('logText').value = exampleLogs;
-            showStatus('Example logs copied to clipboard');
-          });
-        });
+        // Event listeners removed as we simplified the UI
 
         // Handle messages from the extension
         window.addEventListener('message', event => {
