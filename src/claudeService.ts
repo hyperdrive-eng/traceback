@@ -18,6 +18,7 @@ export interface CallerAnalysis {
     rankedCallers: Array<{
         filePath: string;
         lineNumber: number;
+        code: string;
         functionName: string;
         confidence: number;
         explanation: string;

@@ -657,7 +657,7 @@ function processTraditionalFormat(parsedData: any, rawContent: string): LogEntry
  * Find the code location based on log information
  * This function has been simplified to better handle arbitrary log formats
  */
-export async function findCodeLocation(log: LogEntry, repoPath: string): Promise<{ file: string; line: number } | undefined> {
+export async function findCodeLocation(log: LogEntry, repoPath: string): Promise<{ file: string; line: number }> {
   try {
     // Progress indicator
     return await vscode.window.withProgress({
@@ -709,7 +709,7 @@ export async function findCodeLocation(log: LogEntry, repoPath: string): Promise
       // If we still couldn't find anything searchable, we can't locate the source
       if (!searchContent || searchContent.trim().length < 3) {
         console.warn('No searchable content found in log entry');
-        return undefined;
+        throw new Error('No searchable content found in log entry');
       }
       
       // Extract target path hints from the log
@@ -895,11 +895,11 @@ export async function findCodeLocation(log: LogEntry, repoPath: string): Promise
         };
       }
       
-      return undefined;
+      throw new Error('No code location found');
     });
   } catch (error) {
     console.error('Error in findCodeLocation:', error);
-    return undefined;
+    throw error;
   }
 }
 

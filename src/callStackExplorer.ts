@@ -62,7 +62,7 @@ export class CallStackExplorerProvider implements vscode.TreeDataProvider<vscode
 
   private spans: Span[] = [];
   private currentLogEntry: LogEntry | undefined;
-  private callerAnalysis: CallerAnalysis | undefined;
+  private callerAnalysis: CallerAnalysis = { rankedCallers: [] };
   private claudeService: ClaudeService = ClaudeService.getInstance();
 
   constructor(private context: vscode.ExtensionContext) {}
@@ -156,25 +156,23 @@ export class CallStackExplorerProvider implements vscode.TreeDataProvider<vscode
         
         if (document.languageId === 'go') {
             try {
-                // Try Go-specific command for finding symbols
-                const goSymbols = await vscode.commands.executeCommand<vscode.DocumentSymbol[]>(
-                    'go.test.cursor',
-                    document.uri,
-                    new vscode.Position(lineNumber, 0)
+                // Use standard Go symbol provider instead of test-specific commands
+                symbols = await vscode.commands.executeCommand<vscode.DocumentSymbol[]>(
+                    'vscode.executeDocumentSymbolProvider',
+                    document.uri
                 );
-                console.log('Go-specific symbols:', goSymbols);
+                console.log('Go symbols:', symbols);
                 
-                if (!goSymbols || goSymbols.length === 0) {
-                    // Try gopls workspace symbols
-                    const goplsSymbols = await vscode.commands.executeCommand<vscode.SymbolInformation[]>(
-                        'gopls.test.cursor',
-                        document.uri,
-                        new vscode.Position(lineNumber, 0)
+                if (!symbols || symbols.length === 0) {
+                    // Try workspace symbols as fallback
+                    const workspaceSymbols = await vscode.commands.executeCommand<vscode.SymbolInformation[]>(
+                        'vscode.executeWorkspaceSymbolProvider',
+                        path.basename(document.uri.fsPath)
                     );
-                    console.log('Gopls symbols:', goplsSymbols);
+                    console.log('Go workspace symbols:', workspaceSymbols);
                     
-                    if (goplsSymbols) {
-                        symbols = goplsSymbols.map(s => ({
+                    if (workspaceSymbols) {
+                        symbols = workspaceSymbols.map(s => ({
                             name: s.name,
                             detail: '',
                             kind: s.kind,
@@ -183,8 +181,6 @@ export class CallStackExplorerProvider implements vscode.TreeDataProvider<vscode
                             children: []
                         }));
                     }
-                } else {
-                    symbols = goSymbols;
                 }
             } catch (error) {
                 console.log('Error getting Go symbols:', error);
@@ -475,6 +471,26 @@ export class CallStackExplorerProvider implements vscode.TreeDataProvider<vscode
     }
 
     return Promise.resolve([]);
+  }
+
+  // Add method to get current analysis
+  public getCallStackAnalysis() {
+    return this.callerAnalysis;
+  }
+
+  // Add method to set analysis from cache
+  public setCallStackAnalysisFromCache(rankedCallers: Array<{
+    filePath: string;
+    lineNumber: number;
+    code: string;
+    functionName: string;
+    confidence: number;
+    explanation: string;
+  }>) {
+    this.callerAnalysis = {
+      rankedCallers
+    };
+    this._onDidChangeTreeData.fire();
   }
 }
 
