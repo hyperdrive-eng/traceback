@@ -4,6 +4,10 @@ import { registerVariableExplorer } from "./variableExplorer";
 import { VariableDecorator } from "./variableDecorator";
 import { registerCallStackExplorer } from "./callStackExplorer";
 import { PinnedLogsProvider } from "./pinnedLogsProvider";
+import { ExtensibleLogParser, LogParser } from "./processor";
+
+// Global registry for log parsers
+export const logParserRegistry = new ExtensibleLogParser();
 
 export function activate(context: vscode.ExtensionContext) {
   console.log("TraceBack is now active");
@@ -351,6 +355,26 @@ export function activate(context: vscode.ExtensionContext) {
       }
     }
   );
+  
+  // Command to register a custom log parser extension
+  const registerLogParserCommand = vscode.commands.registerCommand(
+    "traceback.registerLogParser",
+    (parser: LogParser) => {
+      if (!parser || typeof parser.canParse !== 'function' || typeof parser.parse !== 'function') {
+        console.error('Invalid log parser provided. Parser must implement LogParser interface.');
+        return false;
+      }
+      
+      try {
+        logParserRegistry.registerParser(parser);
+        console.log('Custom log parser registered successfully');
+        return true;
+      } catch (error) {
+        console.error('Failed to register log parser:', error);
+        return false;
+      }
+    }
+  );
 
   context.subscriptions.push(
     treeView,
@@ -368,6 +392,7 @@ export function activate(context: vscode.ExtensionContext) {
     storeAxiomTokenCommand,
     getAxiomTokenCommand,
     getAxiomDatasetCommand,
+    registerLogParserCommand,
     statusBarItem,
     jaegerStatusBarItem,
     axiomStatusBarItem,
