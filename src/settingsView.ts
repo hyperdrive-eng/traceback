@@ -248,11 +248,6 @@ export class SettingsView {
     const axiomDataset = this._extensionContext.globalState.get<string>('axiomDataset') || 'otel-demo-traces';
     const repoPath = this._extensionContext.globalState.get<string>('repoPath') || '';
 
-    // Get resource paths
-    const resourcesPath = path.join(this._extensionContext.extensionPath, 'resources');
-    const logoPath = vscode.Uri.file(path.join(resourcesPath, 'log-icon.svg'))
-      .with({ scheme: 'vscode-resource' }).toString();
-
     return `<!DOCTYPE html>
     <html lang="en">
     <head>
@@ -354,7 +349,6 @@ export class SettingsView {
     </head>
     <body>
       <header>
-        <img src="${logoPath}" alt="TraceBack Logo">
         <h1>TraceBack Settings</h1>
       </header>
       
