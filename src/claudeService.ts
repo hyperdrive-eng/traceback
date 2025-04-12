@@ -18,6 +18,7 @@ export interface CallerAnalysis {
     rankedCallers: Array<{
         filePath: string;
         lineNumber: number;
+        code: string;
         functionName: string;
         confidence: number;
         explanation: string;
@@ -28,7 +29,10 @@ export class ClaudeService {
     private static instance: ClaudeService;
     private apiKey: string | undefined;
     private apiEndpoint: string = 'https://api.anthropic.com/v1/messages';
-    private model: string = 'claude-3-opus-20240229';
+
+    // Use different models for different tasks
+    private analysisModel: string = 'claude-3-haiku-20240307'; // Fast model for simple analysis
+    private callerModel: string = 'claude-3-7-sonnet-20250219';  // Use Sonnet for better balance of speed and quality
 
     private constructor() {
         // Load API key from workspace state if available
@@ -115,7 +119,7 @@ export class ClaudeService {
             messages: [{
                 role: 'user',
                 content: `Analyze this log message and extract:
-1. The static prefix or template part that would be in the source code (e.g. fmt.Printf("User %s logged in", username) -> "User logged in")
+1. The static prefix or template part that would be in the source code
 2. Key-value pairs of any variables or dynamic values in the log
 
 Log message: "${logMessage}"
@@ -124,22 +128,15 @@ Rules for static search string:
 - Look for the constant text prefix that would be in a print/log statement
 - Exclude all variable values, data structures, timestamps, IDs, and other dynamic content
 - For structured data like JSON or arrays, only keep the static message prefix before the data
-- Think about how a developer would write the log statement in code:
-  - Good: "Message sent to Kafka" (from: fmt.Printf("Message sent to Kafka: %v", data))
-  - Bad: "Message sent to Kafka: {orders <nil> []}" (includes dynamic data)
-- The static string should be something you'd find in a source file's print/log statement
-- When in doubt, be conservative and only include the clearly static prefix
+- Think about how a developer would write the log statement in code
 
 Rules for variables:
 - Include all dynamic values found in the log
 - Use meaningful key names
-- Preserve the original data types (numbers, strings, objects)
-- Include any structured data or nested objects
-
-Use the analyze_log function to return the results in the exact format required.`
+- Preserve the original data types`
             }],
-            model: this.model,
-            max_tokens: 1000,
+            model: this.analysisModel, // Use faster model
+            max_tokens: 500,           // Reduce token limit since we need less
             tools: tools,
             tool_choice: {
                 type: "tool",
@@ -260,8 +257,8 @@ Return a ranked list of callers, each with:
 
 Use the analyze_callers function to return the results in the exact format required.`
             }],
-            model: this.model,
-            max_tokens: 4000,
+            model: this.callerModel,  // Use full model for complex analysis
+            max_tokens: 4000,         // Keep full token limit for detailed analysis
             tools: tools,
             tool_choice: {
                 type: "tool",
