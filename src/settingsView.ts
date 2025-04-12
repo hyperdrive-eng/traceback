@@ -289,17 +289,6 @@ export class SettingsView {
           margin-top: 20px;
           margin-bottom: 10px;
         }
-        .section {
-          margin-bottom: 30px;
-          padding: 15px;
-          background-color: var(--vscode-editor-background);
-          border-radius: 4px;
-        }
-        .subsection {
-          margin-top: 15px;
-          margin-bottom: 15px;
-          padding: 10px;
-        }
         label {
           display: block;
           margin-bottom: 5px;
@@ -352,28 +341,11 @@ export class SettingsView {
         <h1>TraceBack Settings</h1>
       </header>
       
-      <h2>1. Data</h2>
+      <h2>Choose Data</h2>
       
-      <div class="section">
-        <h3>1.1 Local File</h3>
-        <div class="subsection">
-          <button id="selectFile">Select File</button>
-          <div class="current-setting" id="currentLogFile">
-            ${logFilePath ? `Current: ${logFilePath}` : 'No log file selected'}
-          </div>
-        </div>
-        
-        <h3>1.2 Public URL</h3>
-        <div class="subsection">
-          <label for="logUrl">Log URL:</label>
-          <input type="text" id="logUrl" placeholder="https://raw.githubusercontent.com/hyperdrive-eng/playground/refs/heads/main/logs/checkout.log">
-          <button id="loadUrl">Load URL</button>
-        </div>
-        
-        <h3>1.3 Copy/Paste</h3>
-        <div class="subsection">
-          <label for="logText">Paste log content:</label>
-          <textarea id="logText" class="code-sample" placeholder="checkout  | {&quot;message&quot;:&quot;Initializing new client&quot;,&quot;severity&quot;:&quot;info&quot;,&quot;timestamp&quot;:&quot;2025-04-11T12:35:59.036299716Z&quot;}
+      <h3>Copy/Paste</h3>
+        <label for="logText">Paste log content:</label>
+        <textarea id="logText" class="code-sample" placeholder="checkout  | {&quot;message&quot;:&quot;Initializing new client&quot;,&quot;severity&quot;:&quot;info&quot;,&quot;timestamp&quot;:&quot;2025-04-11T12:35:59.036299716Z&quot;}
 checkout  | {&quot;message&quot;:&quot;ClientID is the default of 'sarama', you should consider setting it to something application-specific.&quot;,&quot;severity&quot;:&quot;info&quot;,&quot;timestamp&quot;:&quot;2025-04-11T12:35:59.037147591Z&quot;}
 checkout  | {&quot;message&quot;:&quot;ClientID is the default of 'sarama', you should consider setting it to something application-specific.&quot;,&quot;severity&quot;:&quot;info&quot;,&quot;timestamp&quot;:&quot;2025-04-11T12:35:59.037198133Z&quot;}
 checkout  | {&quot;message&quot;:&quot;client/metadata fetching metadata for all topics from broker kafka:9092\\n&quot;,&quot;severity&quot;:&quot;info&quot;,&quot;timestamp&quot;:&quot;2025-04-11T12:35:59.039354508Z&quot;}
@@ -381,11 +353,20 @@ checkout  | {&quot;message&quot;:&quot;Connected to broker at kafka:9092 (unregi
 checkout  | {&quot;message&quot;:&quot;client/brokers registered new broker #1 at kafka:9092&quot;,&quot;severity&quot;:&quot;info&quot;,&quot;timestamp&quot;:&quot;2025-04-11T12:35:59.067391466Z&quot;}
 checkout  | {&quot;message&quot;:&quot;Successfully initialized new client&quot;,&quot;severity&quot;:&quot;info&quot;,&quot;timestamp&quot;:&quot;2025-04-11T12:35:59.067508841Z&quot;}
 checkout  | {&quot;message&quot;:&quot;service config: \\u0026{productCatalogSvcAddr:product-catalog:3550 cartSvcAddr:cart:7070 currencySvcAddr:currency:7001 shippingSvcAddr:shipping:50050 emailSvcAddr:http://email:6060 paymentSvcAddr:payment:50051 kafkaBrokerSvcAddr:kafka:9092 UnimplementedCheckoutServiceServer:{} KafkaProducerClient:0x400021c100 shippingSvcClient:0x4000402030 productCatalogSvcClient:0x4000402350 cartSvcClient:0x4000402670 currencySvcClient:0x4000402990 emailSvcClient:0x4000402cb0 paymentSvcClient:0x4000402fd0}&quot;,&quot;severity&quot;:&quot;info&quot;,&quot;timestamp&quot;:&quot;2025-04-11T12:35:59.067947175Z&quot;}"></textarea>
-          <button id="loadText">Parse and Load</button>
-        </div>
+        <button id="loadText">Parse and Load</button>
+
+        <h3>Public URL</h3>
+          <label for="logUrl">Log URL:</label>
+          <input type="text" id="logUrl" placeholder="https://raw.githubusercontent.com/hyperdrive-eng/playground/refs/heads/main/logs/checkout.log">
+          <button id="loadUrl">Load URL</button>
         
-        <h3>1.4 Axiom</h3>
-        <div class="subsection">
+        <h3>Local File</h3>
+          <button id="selectFile">Select File</button>
+          <div class="current-setting" id="currentLogFile">
+            ${logFilePath ? `Current: ${logFilePath}` : 'No log file selected'}
+          </div>
+        
+        <h3>Axiom</h3>
           <label for="axiomApiKey">API Key:</label>
           <input type="password" id="axiomApiKey" placeholder="xapt-01234567-89ab-cdef-0123-456789abcdef">
           
@@ -396,20 +377,14 @@ checkout  | {&quot;message&quot;:&quot;service config: \\u0026{productCatalogSvc
           <input type="text" id="axiomQuery" placeholder="5bb959fd715610b1f395edcc344aba6b">
           
           <button id="saveAxiomSettings">Save Settings & Load Trace</button>
-        </div>
-      </div>
       
-      <h2>2. Repository</h2>
+      <h2>Select Repository</h2>
       
-      <div class="section">
-        <h3>2.1 Local Repository</h3>
-        <div class="subsection">
+        <h3>Local Repository</h3>
           <button id="selectRepo">Select Repository</button>
           <div class="current-setting" id="currentRepoPath">
             ${repoPath ? `Current: ${repoPath}` : 'No repository selected'}
           </div>
-        </div>
-      </div>
       
       <div id="statusMessage" class="status"></div>
       
