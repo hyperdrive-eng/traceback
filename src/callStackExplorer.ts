@@ -3,6 +3,7 @@ import { LogEntry, Span, JaegerSpan } from './logExplorer';
 import { CallerAnalysis } from './claudeService';
 import { ClaudeService } from './claudeService';
 import * as path from 'path';
+import { logLineDecorationType } from './decorations';
 
 interface CallerNode {
   filePath: string;
@@ -489,6 +490,9 @@ export class CallStackExplorerProvider implements vscode.TreeDataProvider<CallSt
         document.lineAt(caller.lineNumber).text.length
       );
       editor.revealRange(range, vscode.TextEditorRevealType.InCenter);
+      
+      // Apply the yellow highlight decoration
+      editor.setDecorations(logLineDecorationType, [range]);
 
       // If children haven't been analyzed yet, do it now
       if (!caller.children && !caller.isLoading) {
