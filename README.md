@@ -14,9 +14,11 @@ A VS Code extension that brings telemetry data (traces, logs, and metrics) into 
 
    <img src="https://github.com/user-attachments/assets/a25c776d-adc7-4f57-9f69-5c1ec2ff9cc0">
 
-1. Add a data source (local file, public URL, copy/paste, Axiom.co)
+1. Choose a data source (local file, public URL, copy/paste, Axiom.co)
 
-1. Select a log from the sidebar
+    <img width="1053" alt="image" src="https://github.com/user-attachments/assets/94e2e749-0f66-4b9d-8bc9-40f71795022d" />
+
+1. Load and select a log from the sidebar
 
     <img src="https://github.com/user-attachments/assets/9e5c942c-6d40-48ac-8d14-d94ac49c4f6c">
 
