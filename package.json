@@ -17,6 +17,7 @@
   ],
   "activationEvents": [
     "onView:logExplorer",
+    "onView:logDetailView",
     "onView:logVariablesExplorer",
     "onView:callStackExplorer",
     "onView:logDetailView",

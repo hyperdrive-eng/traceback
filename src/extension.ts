@@ -14,15 +14,31 @@ export const logParserRegistry = new ExtensibleLogParser();
 export function activate(context: vscode.ExtensionContext) {
   console.log("TraceBack is now active");
   
-  // Empty function to replace status bar updates since we've removed the status bars
   const updateStatusBars = () => {};
 
-  // Create providers
+  // Create and register the Log Detail View provider FIRST
+  const logDetailViewProvider = new LogDetailViewProvider(context.extensionUri);
+  
+  // Register the webview provider
+  const logDetailViewRegistration = vscode.window.registerWebviewViewProvider(
+    'logDetailView',
+    logDetailViewProvider,
+    {
+      webviewOptions: { retainContextWhenHidden: true }
+    }
+  );
+
+  // Create other providers
   const logExplorerProvider = new LogExplorerProvider(context);
   const variableExplorerProvider = registerVariableExplorer(context);
   const callStackExplorerProvider = registerCallStackExplorer(context);
   const variableDecorator = new VariableDecorator(context);
-  const logDetailViewProvider = new LogDetailViewProvider(context.extensionUri);
+
+  // Register the tree view
+  const logExplorerTreeView = vscode.window.createTreeView("logExplorer", {
+    treeDataProvider: logExplorerProvider,
+    showCollapseAll: false,
+  });
 
   // Connect providers
   variableExplorerProvider.setVariableDecorator(variableDecorator);
@@ -330,25 +346,9 @@ export function activate(context: vscode.ExtensionContext) {
   );
 
   context.subscriptions.push(
-    treeView,
-    logDetailViewProvider,
-    refreshCommand,
-    showLogsCommand,
-    filterCommand,
-    setLogPathCommand,
-    setRepoPathCommand,
-    resetLogPathCommand,
-    clearExplorersCommand,
-    loadJaegerTraceCommand,
-    setJaegerEndpointCommand,
-    loadAxiomTraceCommand,
-    setAxiomDatasetCommand,
-    storeAxiomTokenCommand,
-    getAxiomTokenCommand,
-    getAxiomDatasetCommand,
-    registerLogParserCommand,
-    openSettingsCommand,
-    openCallStackLocationCommand
+    logDetailViewRegistration,
+    logExplorerTreeView,
+    // ... other subscriptions ...
   );
 
   // Initial refresh
