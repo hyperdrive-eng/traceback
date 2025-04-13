@@ -5,6 +5,7 @@ import dayjs from 'dayjs';
 import { findCodeLocation, loadLogs } from './processor';
 import { logLineDecorationType, variableValueDecorationType, clearDecorations } from './decorations';
 import { CallerAnalysis, ClaudeService, LLMLogAnalysis } from './claudeService';
+import { LogDetailViewProvider } from './logDetailViewProvider';
 
 // Core interfaces for log structure
 export interface Span {
@@ -162,6 +163,7 @@ export class LogExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
     }>) => void
   } | undefined;
   private claudeService: ClaudeService = ClaudeService.getInstance();
+  private logDetailViewProvider: LogDetailViewProvider | undefined;
 
   constructor(context: vscode.ExtensionContext) {
     this.context = context;
@@ -216,6 +218,11 @@ export class LogExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
     }>) => void
   }): void {
     this.callStackExplorerProvider = provider;
+  }
+
+  public setLogDetailViewProvider(provider: LogDetailViewProvider): void {
+    console.log('Setting logDetailViewProvider');
+    this.logDetailViewProvider = provider;
   }
 
   refresh(): void {
@@ -414,11 +421,21 @@ export class LogExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
     }
   }
 
-  private async openLog(log: LogEntry): Promise<void> {
+  public async openLog(log: LogEntry): Promise<void> {
+    console.log('openLog called with:', log);
+    
+    // Update the Log Detail View first
+    if (this.logDetailViewProvider) {
+      console.log('Updating log detail view');
+      this.logDetailViewProvider.updateLogDetails(log);
+    } else {
+      console.log('logDetailViewProvider is undefined');
+    }
+
+    // Clear previous decorations
+    clearDecorations();
+
     try {
-      // Clear any existing decorations
-      clearDecorations();
-      
       // Show progress indicator for initial analysis
       await vscode.window.withProgress({
         location: vscode.ProgressLocation.Notification,
@@ -873,12 +890,11 @@ export class LogTreeItem extends vscode.TreeItem {
 
     this.command = {
       command: 'traceback.openLog',
-      title: 'Open Log Location',
+      title: 'Open Log',
       arguments: [log]
     };
 
-    // Set context value based on whether it's pinnable (it's not anymore)
-    this.contextValue = 'logEntry'; // Removed 'pinnableLogEntry' and pin status logic
+    this.contextValue = 'logEntry';
 
     // Initialize first log time if not set
     if (LogTreeItem.firstLogTime === null) {

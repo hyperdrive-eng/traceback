@@ -5,6 +5,8 @@ import { VariableDecorator } from "./variableDecorator";
 import { registerCallStackExplorer } from "./callStackExplorer";
 import { ExtensibleLogParser, LogParser } from "./processor";
 import { SettingsView } from "./settingsView";
+import { LogDetailViewProvider } from './logDetailViewProvider';
+import { LogEntry } from "./logExplorer";
 
 // Global registry for log parsers
 export const logParserRegistry = new ExtensibleLogParser();
@@ -14,6 +16,18 @@ export function activate(context: vscode.ExtensionContext) {
   
   // Empty function to replace status bar updates since we've removed the status bars
   const updateStatusBars = () => {};
+
+  // Create and register the Log Detail View provider
+  const logDetailViewProvider = new LogDetailViewProvider(context.extensionUri);
+  
+  // Register the webview provider
+  const logDetailViewRegistration = vscode.window.registerWebviewViewProvider(
+    'logDetailView', // Use string literal to match package.json
+    logDetailViewProvider,
+    {
+      webviewOptions: { retainContextWhenHidden: true }
+    }
+  );
 
   // Create the LogExplorerProvider instance
   const logExplorerProvider = new LogExplorerProvider(context);
@@ -40,9 +54,13 @@ export function activate(context: vscode.ExtensionContext) {
   logExplorerProvider.setVariableExplorer(variableExplorerProvider);
   logExplorerProvider.setCallStackExplorer(callStackExplorerProvider);
 
+  // Set the Log Detail View provider in the Log Explorer
+  logExplorerProvider.setLogDetailViewProvider(logDetailViewProvider);
+
   // Register commands
   const refreshCommand = vscode.commands.registerCommand("traceback.refreshLogs", () => {
     logExplorerProvider.refresh();
+    logDetailViewProvider.updateLogDetails(undefined);
   });
 
   const showLogsCommand = vscode.commands.registerCommand("traceback.showLogs", () => {
@@ -334,6 +352,7 @@ export function activate(context: vscode.ExtensionContext) {
 
   context.subscriptions.push(
     treeView,
+    logDetailViewRegistration,
     refreshCommand,
     showLogsCommand,
     filterCommand,
@@ -352,6 +371,10 @@ export function activate(context: vscode.ExtensionContext) {
     openSettingsCommand,
     openCallStackLocationCommand
   );
+
+  // Initial refresh
+  updateStatusBars();
+  logExplorerProvider.refresh();
 }
 
 /**
