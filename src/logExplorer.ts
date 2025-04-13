@@ -218,7 +218,6 @@ export class LogExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
     this.callStackExplorerProvider = provider;
   }
 
-
   refresh(): void {
     this.loadLogs();
     this._onDidChangeTreeData.fire();
@@ -240,7 +239,7 @@ export class LogExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
         const ungroupedLogs = allLogs.filter(log => !log.jsonPayload && !log.jaegerSpan && !log.axiomSpan);
         if (ungroupedLogs.length > 0) {
           return Promise.resolve(
-            ungroupedLogs.map(log => new LogTreeItem(log, false))
+            ungroupedLogs.map(log => new LogTreeItem(log))
           );
         }
 
@@ -306,7 +305,7 @@ export class LogExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
         if (ungroupedLogs.length > 0) {
           result.push(...ungroupedLogs
             .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
-            .map(log => new LogTreeItem(log, false))
+            .map(log => new LogTreeItem(log))
           );
         }
 
@@ -314,10 +313,7 @@ export class LogExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
       }
     } else if (element instanceof SpanGroupItem) {
       return Promise.resolve(
-        element.logs.map(log => new LogTreeItem(
-          log,
-          false
-        ))
+        element.logs.map(log => new LogTreeItem(log))
       );
     }
     return Promise.resolve([]);
@@ -836,79 +832,53 @@ export class LogTreeItem extends vscode.TreeItem {
   private static readonly MAX_MESSAGE_LENGTH = 100;
   private static firstLogTime: number | null = null;
 
-  constructor(protected log: LogEntry, private isPinned: boolean = false) {
-    let fullMessage: string;
+  constructor(
+    public readonly log: LogEntry,
+    isSpanRoot: boolean = false // Track if it's the root of a span group
+  ) {
+    const message = log.message || log.rawText || 'No message';
+    const label = `${dayjs(log.timestamp).format('HH:mm:ss.SSS')} [${log.severity.toUpperCase()}] ${message.substring(0, 100)}${message.length > 100 ? '...' : ''}`;
 
-    // Handle Jaeger trace format
-    if (log.jaegerSpan) {
-      // Use operationName as the main message
-      const operationName = log.jaegerSpan.operationName;
-
-      // Extract an event message if available (from log entries)
-      let eventMessage = '';
-      if (log.jaegerSpan.logs && log.jaegerSpan.logs.length > 0) {
-        // Find event field in the first log entry
-        const eventField = log.jaegerSpan.logs[0].fields.find(field => field.key === 'event');
-        if (eventField) {
-          eventMessage = ` - ${eventField.value}`;
-        }
-      }
-
-      // Look for important tags to display
-      let tagInfo = '';
-      const importantTags = ['http.method', 'http.status_code', 'error', 'rpc.method'];
-      for (const tagName of importantTags) {
-        const tag = log.jaegerSpan.tags.find(t => t.key === tagName);
-        if (tag) {
-          tagInfo += ` [${tag.key}=${tag.value}]`;
-        }
-      }
-
-      fullMessage = `${operationName}${eventMessage}${tagInfo}`;
-    }
-    // Handle Axiom trace format
-    else if (log.axiomSpan) {
-      // Use span name as the main message
-      const operationName = log.axiomSpan.name || 'Unknown operation';
-
-      // Build extra information from important attributes
-      let attributeInfo = '';
-      const importantAttrs = [
-        'http.method',
-        'http.status_code',
-        'error',
-        'rpc.method',
-        'attributes.http.method',
-        'attributes.http.status_code',
-        'attributes.error.type'
-      ];
-
-      for (const attrName of importantAttrs) {
-        if (log.axiomSpan[attrName]) {
-          attributeInfo += ` [${attrName.replace('attributes.', '')}=${log.axiomSpan[attrName]}]`;
-        }
-      }
-
-      // Include duration if available
-      const duration = log.axiomSpan.duration ? ` (${log.axiomSpan.duration})` : '';
-
-      fullMessage = `${operationName}${duration}${attributeInfo}`;
-    }
-    // Handle original log format
-    else if (log.jsonPayload?.fields) {
-      const message = log.jsonPayload.fields.message || '';
-      const chain = log.jsonPayload.fields.chain ? `[${log.jsonPayload.fields.chain}] ` : '';
-      fullMessage = `${chain}${message}`;
-    }
-      // Fallback to unified message field or rawText
-    else {
-      fullMessage = log.message || log.rawText || 'No message';
+    let collapsibleState = vscode.TreeItemCollapsibleState.None;
+    if (isSpanRoot && (log.jsonPayload?.spans?.length || log.jaegerSpan?.references?.length || log.axiomSpan?.children?.length)) {
+      collapsibleState = vscode.TreeItemCollapsibleState.Collapsed;
     }
 
-    const truncatedMessage = LogTreeItem.truncateMessage(fullMessage);
+    super(label, collapsibleState);
 
-    // Add pin icon to the label if pinned
-    super(truncatedMessage, vscode.TreeItemCollapsibleState.None);
+    this.tooltip = new vscode.MarkdownString(`**Timestamp:** ${log.timestamp}\n\n**Severity:** ${log.severity}\n\n**Target:** ${log.target || 'N/A'}\n\n\`\`\`\n${log.rawText}\n\`\`\``);
+    this.description = log.target ? `(${log.target})` : '';
+    this.id = log.insertId || log.jaegerSpan?.spanID || log.timestamp; // Ensure unique ID
+
+    // Set icon based on severity
+    switch (log.severity.toUpperCase()) {
+      case 'ERROR':
+      case 'CRITICAL':
+      case 'FATAL':
+        this.iconPath = new vscode.ThemeIcon('error', new vscode.ThemeColor('errorForeground'));
+        break;
+      case 'WARNING':
+        this.iconPath = new vscode.ThemeIcon('warning', new vscode.ThemeColor('list.warningForeground'));
+        break;
+      case 'INFO':
+        this.iconPath = new vscode.ThemeIcon('info');
+        break;
+      case 'DEBUG':
+      case 'TRACE':
+        this.iconPath = new vscode.ThemeIcon('debug');
+        break;
+      default:
+        this.iconPath = new vscode.ThemeIcon('circle-filled');
+    }
+
+    this.command = {
+      command: 'traceback.openLog',
+      title: 'Open Log Location',
+      arguments: [log]
+    };
+
+    // Set context value based on whether it's pinnable (it's not anymore)
+    this.contextValue = 'logEntry'; // Removed 'pinnableLogEntry' and pin status logic
 
     // Initialize first log time if not set
     if (LogTreeItem.firstLogTime === null) {
@@ -934,69 +904,10 @@ export class LogTreeItem extends vscode.TreeItem {
     }
 
     this.description = `(${relativeTime})`;
-
-    // Set the icon based on severity
-    this.iconPath = this.getIcon(log.severity);
-
-    // Create tooltip with details
-    let location: string;
-    if (log.jaegerSpan) {
-      location = log.serviceName || 'Unknown service';
-    } else {
-      location = log.jsonPayload?.target || log.target || 'Unknown';
-    }
-
-    const tooltipDetails = [
-      `Time: ${new Date(log.timestamp).toLocaleString()}`,
-      `Level: ${log.severity}`,
-      `Location: ${location}`
-    ];
-
-    const tooltip = new vscode.MarkdownString(tooltipDetails.join('\n\n'));
-    tooltip.isTrusted = true;
-    this.tooltip = tooltip;
-
-    this.command = {
-      command: 'traceback.openLog',
-      title: 'Open Log',
-      arguments: [log],
-    };
   }
 
   // Reset first log time when logs are reloaded
   public static resetFirstLogTime(): void {
     LogTreeItem.firstLogTime = null;
-  }
-
-  private getIcon(level: string): vscode.ThemeIcon {
-    switch (level) {
-      case 'INFO':
-        return new vscode.ThemeIcon('info', new vscode.ThemeColor('charts.blue'));
-      case 'WARNING':
-        return new vscode.ThemeIcon('warning', new vscode.ThemeColor('charts.yellow'));
-      case 'ERROR':
-        return new vscode.ThemeIcon('error', new vscode.ThemeColor('charts.red'));
-      case 'DEBUG':
-        return new vscode.ThemeIcon('debug', new vscode.ThemeColor('charts.green'));
-      default:
-        return new vscode.ThemeIcon('symbol-text', new vscode.ThemeColor('terminal.ansiWhite'));
-    }
-  }
-
-  // Getter for the log entry
-  public getLogEntry(): LogEntry {
-    return this.log;
-  }
-
-  // Getter for pin status
-  public isPinnedLog(): boolean {
-    return this.isPinned;
-  }
-
-  private static truncateMessage(message: string): string {
-    if (message.length <= this.MAX_MESSAGE_LENGTH) {
-      return message;
-    }
-    return message.substring(0, this.MAX_MESSAGE_LENGTH - 3) + '...';
   }
 }

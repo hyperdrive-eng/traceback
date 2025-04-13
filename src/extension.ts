@@ -213,7 +213,6 @@ export function activate(context: vscode.ExtensionContext) {
     }
   );
 
-
   // Command to store Axiom API token securely
   const storeAxiomTokenCommand = vscode.commands.registerCommand(
     "traceback.storeAxiomToken",
@@ -351,7 +350,7 @@ export function activate(context: vscode.ExtensionContext) {
     getAxiomDatasetCommand,
     registerLogParserCommand,
     openSettingsCommand,
-    openCallStackLocationCommand,
+    openCallStackLocationCommand
   );
 }
 
