@@ -118,6 +118,12 @@
     "views": {
       "traceback": [
         {
+          "id": "logExplorer",
+          "name": "Logs",
+          "icon": "$(list-unordered)",
+          "contextualTitle": "Logs Explorer"
+        },
+        {
           "type": "webview",
           "id": "logDetailView",
           "name": "Log Details",
@@ -125,13 +131,7 @@
           "contextualTitle": "Log Details"
         },
         {
-          "id": "logExplorer",
-          "name": "Logs",
-          "icon": "$(list-unordered)",
-          "contextualTitle": "Logs Explorer"
-        },
-        {
-          "id": "logVariableExplorer",
+          "id": "variableExplorer",
           "name": "Variables",
           "icon": "$(symbol-variable)",
           "contextualTitle": "Variable Explorer"
