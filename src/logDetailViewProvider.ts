@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import { LogEntry } from './logExplorer';
 import dayjs from 'dayjs';
 
-export class LogDetailViewProvider implements vscode.WebviewViewProvider {
+export class LogDetailViewProvider implements vscode.WebviewViewProvider, vscode.Disposable {
     public static readonly viewType = 'logDetailView';
     private _view?: vscode.WebviewView;
     private _pendingLog?: LogEntry;
@@ -11,6 +11,12 @@ export class LogDetailViewProvider implements vscode.WebviewViewProvider {
         private readonly _extensionUri: vscode.Uri,
     ) {
         console.log('LogDetailViewProvider constructed');
+    }
+
+    public dispose() {
+        // Clear any resources
+        this._view = undefined;
+        this._pendingLog = undefined;
     }
 
     public resolveWebviewView(

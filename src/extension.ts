@@ -17,45 +17,24 @@ export function activate(context: vscode.ExtensionContext) {
   // Empty function to replace status bar updates since we've removed the status bars
   const updateStatusBars = () => {};
 
-  // Create and register the Log Detail View provider
-  const logDetailViewProvider = new LogDetailViewProvider(context.extensionUri);
-  
-  // Register the webview provider
-  const logDetailViewRegistration = vscode.window.registerWebviewViewProvider(
-    'logDetailView', // Use string literal to match package.json
-    logDetailViewProvider,
-    {
-      webviewOptions: { retainContextWhenHidden: true }
-    }
-  );
-
-  // Create the LogExplorerProvider instance
+  // Create providers
   const logExplorerProvider = new LogExplorerProvider(context);
+  const variableExplorerProvider = registerVariableExplorer(context);
+  const callStackExplorerProvider = registerCallStackExplorer(context);
+  const variableDecorator = new VariableDecorator(context);
+  const logDetailViewProvider = new LogDetailViewProvider(context.extensionUri);
 
-  // Register the tree view
+  // Connect providers
+  variableExplorerProvider.setVariableDecorator(variableDecorator);
+  logExplorerProvider.setVariableExplorer(variableExplorerProvider);
+  logExplorerProvider.setCallStackExplorer(callStackExplorerProvider);
+  logExplorerProvider.setLogDetailViewProvider(logDetailViewProvider);
+
+  // Create the tree view
   const treeView = vscode.window.createTreeView("logExplorer", {
     treeDataProvider: logExplorerProvider,
     showCollapseAll: false,
   });
-
-  // Create the variable decorator
-  const variableDecorator = new VariableDecorator(context);
-
-  // Register the Variables view
-  const variableExplorerProvider = registerVariableExplorer(context);
-
-  // Register the Call Stack view
-  const callStackExplorerProvider = registerCallStackExplorer(context);
-
-  // Connect the Variables view with the decorator
-  variableExplorerProvider.setVariableDecorator(variableDecorator);
-
-  // Associate the Variables and Call Stack views with the Logs view
-  logExplorerProvider.setVariableExplorer(variableExplorerProvider);
-  logExplorerProvider.setCallStackExplorer(callStackExplorerProvider);
-
-  // Set the Log Detail View provider in the Log Explorer
-  logExplorerProvider.setLogDetailViewProvider(logDetailViewProvider);
 
   // Register commands
   const refreshCommand = vscode.commands.registerCommand("traceback.refreshLogs", () => {
@@ -352,7 +331,7 @@ export function activate(context: vscode.ExtensionContext) {
 
   context.subscriptions.push(
     treeView,
-    logDetailViewRegistration,
+    logDetailViewProvider,
     refreshCommand,
     showLogsCommand,
     filterCommand,

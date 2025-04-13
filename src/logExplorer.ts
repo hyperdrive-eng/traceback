@@ -421,7 +421,7 @@ export class LogExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
     }
   }
 
-  public async openLog(log: LogEntry): Promise<void> {
+  private async openLog(log: LogEntry): Promise<void> {
     console.log('openLog called with:', log);
     
     // Update the Log Detail View first
