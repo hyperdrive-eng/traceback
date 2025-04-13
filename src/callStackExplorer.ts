@@ -16,6 +16,11 @@ interface CallerNode {
   isLoading?: boolean;
 }
 
+interface CallStackCache {
+  children: CallerNode[];
+  lastUpdated: string;
+}
+
 /**
  * TreeItem for call stack entries in the Call Stack Explorer
  */
@@ -79,6 +84,7 @@ export class CallStackExplorerProvider implements vscode.TreeDataProvider<CallSt
   private callerAnalysis: CallerNode[] = [];
   private claudeService: ClaudeService = ClaudeService.getInstance();
   private isAnalyzing: boolean = false;
+  private callStackCache: Map<string, CallStackCache> = new Map();
 
   constructor(private context: vscode.ExtensionContext) {}
 
@@ -496,6 +502,17 @@ export class CallStackExplorerProvider implements vscode.TreeDataProvider<CallSt
 
       // If children haven't been analyzed yet, do it now
       if (!caller.children && !caller.isLoading) {
+        // Check cache first
+        const cacheKey = `${caller.filePath}:${caller.lineNumber}`;
+        const cached = this.callStackCache.get(cacheKey);
+        
+        if (cached) {
+          // Use cached results
+          caller.children = cached.children;
+          this._onDidChangeTreeData.fire(treeItem);
+          return;
+        }
+
         // Mark as loading
         caller.isLoading = true;
         this._onDidChangeTreeData.fire(treeItem);
@@ -515,8 +532,8 @@ export class CallStackExplorerProvider implements vscode.TreeDataProvider<CallSt
           // Analyze callers
           const analysis = await this.claudeService.analyzeCallers(
             lineText,
-            lineText, // Use the actual line as static search string since we're looking at code
-            [], // Empty log lines since we're analyzing code
+            lineText,
+            [],
             potentialCallers
           );
 
@@ -529,9 +546,23 @@ export class CallStackExplorerProvider implements vscode.TreeDataProvider<CallSt
             confidence: rc.confidence,
             explanation: rc.explanation
           }));
+
+          // Cache the results
+          this.callStackCache.set(cacheKey, {
+            children: caller.children,
+            lastUpdated: new Date().toISOString()
+          });
+
           vscode.window.showInformationMessage('Call location analysis complete');
         } else {
           caller.children = []; // Empty array to indicate analysis is complete
+          
+          // Cache empty results too
+          this.callStackCache.set(cacheKey, {
+            children: [],
+            lastUpdated: new Date().toISOString()
+          });
+
           vscode.window.showInformationMessage('No potential callers found');
         }
 
@@ -550,6 +581,10 @@ export class CallStackExplorerProvider implements vscode.TreeDataProvider<CallSt
         this._onDidChangeTreeData.fire(treeItem);
       }
     }
+  }
+
+  public clearCache(): void {
+    this.callStackCache.clear();
   }
 }
 
