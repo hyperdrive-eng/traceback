@@ -365,9 +365,14 @@ export class LogExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
         return;
       }
 
-      // Reset first log time before loading new logs
+      // Reset first log time and ID counter before loading new logs
       LogTreeItem.resetFirstLogTime();
+      
+      // Clear existing logs and span map
+      this.logs = [];
+      this.spanMap.clear();
 
+      // Load new logs
       this.logs = await loadLogs(logPath);
 
       // Group logs by span name
@@ -418,6 +423,7 @@ export class LogExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
     } catch (error) {
       console.error('Error loading logs:', error);
       this.logs = [];
+      this.spanMap.clear();
     }
   }
 
@@ -715,7 +721,7 @@ export class LogExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
     }
   }
 
-  private toggleSort(): void {
+  public toggleSort(): void {
     this.sortByTime = !this.sortByTime;
     vscode.commands.executeCommand('setContext', 'traceback.timeSort', this.sortByTime);
     vscode.window.showInformationMessage(
@@ -848,10 +854,11 @@ export class SpanGroupItem extends vscode.TreeItem {
 export class LogTreeItem extends vscode.TreeItem {
   private static readonly MAX_MESSAGE_LENGTH = 100;
   private static firstLogTime: number | null = null;
+  private static idCounter = 0;  // Add a counter for generating unique IDs
 
   constructor(
     public readonly log: LogEntry,
-    isSpanRoot: boolean = false // Track if it's the root of a span group
+    isSpanRoot: boolean = false
   ) {
     const message = log.message || log.rawText || 'No message';
     const label = `${dayjs(log.timestamp).format('HH:mm:ss.SSS')} [${log.severity.toUpperCase()}] ${message.substring(0, 100)}${message.length > 100 ? '...' : ''}`;
@@ -865,7 +872,9 @@ export class LogTreeItem extends vscode.TreeItem {
 
     this.tooltip = new vscode.MarkdownString(`**Timestamp:** ${log.timestamp}\n\n**Severity:** ${log.severity}\n\n**Target:** ${log.target || 'N/A'}\n\n\`\`\`\n${log.rawText}\n\`\`\``);
     this.description = log.target ? `(${log.target})` : '';
-    this.id = log.insertId || log.jaegerSpan?.spanID || log.timestamp; // Ensure unique ID
+    
+    // Generate a unique ID by combining available identifiers with a counter
+    this.id = log.insertId || log.jaegerSpan?.spanID || `${log.timestamp}_${LogTreeItem.idCounter++}`;
 
     // Set icon based on severity
     switch (log.severity.toUpperCase()) {
@@ -922,8 +931,9 @@ export class LogTreeItem extends vscode.TreeItem {
     this.description = `(${relativeTime})`;
   }
 
-  // Reset first log time when logs are reloaded
+  // Reset both firstLogTime and idCounter when logs are reloaded
   public static resetFirstLogTime(): void {
     LogTreeItem.firstLogTime = null;
+    LogTreeItem.idCounter = 0;  // Reset the counter
   }
 }

@@ -348,7 +348,15 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     logDetailViewRegistration,
     logExplorerTreeView,
-    // ... other subscriptions ...
+    openSettingsCommand,
+    refreshLogsCommand,
+    filterLogsCommand,
+    setRepoPathCommand,
+    clearExplorersCommand,
+    loadJaegerTraceCommand,
+    setJaegerEndpointCommand,
+    loadAxiomTraceCommand,
+    setAxiomDatasetCommand
   );
 
   // Initial refresh

@@ -292,6 +292,7 @@ export class SettingsView {
         label {
           display: block;
           margin-bottom: 5px;
+          color: var(--vscode-input-placeholderForeground);
         }
         input[type="text"], 
         input[type="password"],
@@ -303,6 +304,20 @@ export class SettingsView {
           color: var(--vscode-input-foreground);
           border: 1px solid var(--vscode-input-border);
           border-radius: 2px;
+          font-family: var(--vscode-font-family);
+          font-size: var(--vscode-font-size);
+        }
+        input::placeholder,
+        textarea::placeholder {
+          color: var(--vscode-input-placeholderForeground);
+          opacity: 0.7;
+        }
+        textarea.code-sample {
+          height: 200px;
+          font-family: var(--vscode-editor-font-family);
+          line-height: 1.4;
+          white-space: pre;
+          tab-size: 2;
         }
         button {
           background-color: var(--vscode-button-background);
@@ -311,28 +326,39 @@ export class SettingsView {
           padding: 8px 12px;
           border-radius: 2px;
           cursor: pointer;
+          font-family: var(--vscode-font-family);
+          font-size: var(--vscode-font-size);
         }
         button:hover {
           background-color: var(--vscode-button-hoverBackground);
+        }
+        button:focus {
+          outline: 1px solid var(--vscode-focusBorder);
+          outline-offset: 2px;
         }
         .current-setting {
           margin-top: 5px;
           font-size: 12px;
           color: var(--vscode-descriptionForeground);
-        }
-        textarea.code-sample {
-          height: 200px;
-          font-family: var(--vscode-editor-font-family);
-          color: var(--vscode-input-placeholderForeground);
+          font-style: italic;
         }
         .status {
           margin-top: 10px;
-          padding: 5px;
-          font-size: 12px;
+          padding: 8px;
+          font-size: 13px;
           color: var(--vscode-notificationsInfoForeground);
           background-color: var(--vscode-notificationsInfoBackground);
-          border-radius: 2px;
+          border-radius: 3px;
           display: none;
+        }
+        .setting-group {
+          margin-bottom: 24px;
+          padding: 12px;
+          background-color: var(--vscode-editor-inactiveSelectionBackground);
+          border-radius: 4px;
+        }
+        .setting-group:hover {
+          background-color: var(--vscode-list-hoverBackground);
         }
       </style>
     </head>
