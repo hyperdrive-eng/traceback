@@ -3,7 +3,6 @@ import { LogExplorerProvider, LogTreeItem } from "./logExplorer";
 import { registerVariableExplorer } from "./variableExplorer";
 import { VariableDecorator } from "./variableDecorator";
 import { registerCallStackExplorer } from "./callStackExplorer";
-import { PinnedLogsProvider } from "./pinnedLogsProvider";
 import { ExtensibleLogParser, LogParser } from "./processor";
 import { SettingsView } from "./settingsView";
 
@@ -214,10 +213,6 @@ export function activate(context: vscode.ExtensionContext) {
     }
   );
 
-  // Register pin/unpin commands
-  const pinnedLogsProvider = new PinnedLogsProvider(context);
-  vscode.window.registerTreeDataProvider('pinnedLogs', pinnedLogsProvider);
-  logExplorerProvider.setPinnedLogsProvider(pinnedLogsProvider);
 
   // Command to store Axiom API token securely
   const storeAxiomTokenCommand = vscode.commands.registerCommand(
@@ -357,23 +352,6 @@ export function activate(context: vscode.ExtensionContext) {
     registerLogParserCommand,
     openSettingsCommand,
     openCallStackLocationCommand,
-    vscode.commands.registerCommand('traceback.pinLog', (item: LogTreeItem) => {
-      const log = item.getLogEntry();
-      pinnedLogsProvider.pinLog(log);
-      logExplorerProvider.refresh();
-      pinnedLogsProvider.refresh();
-    }),
-    vscode.commands.registerCommand('traceback.unpinLog', (item: LogTreeItem) => {
-      const log = item.getLogEntry();
-      pinnedLogsProvider.unpinLog(log);
-      logExplorerProvider.refresh();
-      pinnedLogsProvider.refresh();
-    }),
-    vscode.commands.registerCommand('traceback.clearPins', () => {
-      pinnedLogsProvider.clearPins();
-      logExplorerProvider.refresh();
-      pinnedLogsProvider.refresh();
-    })
   );
 }
 
