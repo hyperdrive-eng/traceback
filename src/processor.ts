@@ -183,7 +183,7 @@ export interface LogParser {
    * Returns true if this parser can handle the given log content
    */
   canParse(content: string): boolean;
-  
+
   /**
    * Parse the content into LogEntry objects
    */
@@ -207,12 +207,13 @@ export class JsonLogParser implements LogParser {
   async parse(content: string): Promise<LogEntry[]> {
     try {
       const parsed = JSON.parse(content);
-      
+
       // Handle array of log entries
       if (Array.isArray(parsed)) {
-        return parsed.map(log => this.normalizeLogEntry(log));
+        const normalizedLogs = parsed.map(log => this.normalizeLogEntry(log));
+        return normalizedLogs;
       }
-      
+
       // Handle single log entry
       return [this.normalizeLogEntry(parsed)];
     } catch (error) {
@@ -220,22 +221,18 @@ export class JsonLogParser implements LogParser {
       return [];
     }
   }
-  
+
   private normalizeLogEntry(log: any): LogEntry {
     // Ensure minimal required fields exist
-    return {
+    const normalizedLog = {
       severity: log.severity || log.level || 'INFO',
       timestamp: log.timestamp || new Date().toISOString(),
       rawText: JSON.stringify(log),
-      jsonPayload: {
-        fields: {
-          message: log.message || log.msg || JSON.stringify(log)
-        },
-        target: log.target || log.service || log.component || 'unknown'
-      },
-      message: log.message || log.msg || '',
-      target: log.target || log.service || log.component || 'unknown'
+      jsonPayload: log.jsonPayload,
+      message: (log.jsonPayload && log.jsonPayload.fields && log.jsonPayload.fields.message) || log.message || log.msg || '',
+      target: (log.jsonPayload && log.jsonPayload.target) || log.target || log.service || log.component || 'unknown'
     };
+    return normalizedLog;
   }
 }
 
@@ -297,10 +294,10 @@ export class PlainTextLogParser implements LogParser {
   async parse(content: string): Promise<LogEntry[]> {
     const logs: LogEntry[] = [];
     const lines = content.split('\n');
-    
+
     for (const line of lines) {
       if (!line.trim()) continue;
-      
+
       const result = this.parseLogLine(line);
       if (result.matched) {
         logs.push(this.createLogEntry(result.data, line));
@@ -320,10 +317,10 @@ export class PlainTextLogParser implements LogParser {
         });
       }
     }
-    
+
     return logs;
   }
-  
+
   private parseLogLine(line: string): { matched: boolean; data: any } {
     for (const pattern of this.patterns) {
       const matches = pattern.regex.exec(line);
@@ -334,10 +331,10 @@ export class PlainTextLogParser implements LogParser {
         };
       }
     }
-    
+
     return { matched: false, data: {} };
   }
-  
+
   private createLogEntry(data: any, rawLine: string): LogEntry {
     // Determine severity
     let severity = data.severity || 'INFO';
@@ -346,7 +343,7 @@ export class PlainTextLogParser implements LogParser {
     } else if (rawLine.toLowerCase().includes('warn')) {
       severity = 'WARNING';
     }
-    
+
     // Parse timestamp if available or use current time
     let timestamp = data.timestamp || new Date().toISOString();
     if (data.timestamp && !data.timestamp.includes('T')) {
@@ -357,7 +354,7 @@ export class PlainTextLogParser implements LogParser {
         // Keep original if parsing fails
       }
     }
-    
+
     return {
       severity,
       timestamp,
@@ -379,28 +376,28 @@ export class PlainTextLogParser implements LogParser {
  */
 export class ExtensibleLogParser implements LogParser {
   private plugins: LogParser[] = [];
-  
+
   constructor() {
     // Register built-in parsers
     this.registerParser(new JsonLogParser());
     this.registerParser(new PlainTextLogParser());
   }
-  
+
   registerParser(parser: LogParser): void {
     this.plugins.push(parser);
   }
-  
+
   canParse(content: string): boolean {
     // We're the fallback parser, so we always return true
     return true;
   }
-  
+
   async parse(content: string): Promise<LogEntry[]> {
     // Try each parser in order
     for (const parser of this.plugins) {
       if (parser.canParse(content)) {
         const result = await parser.parse(content);
-        
+
         // Validate the result to ensure it has the required LogEntry fields
         if (result && result.length > 0) {
           // Log success with the parser type
@@ -409,7 +406,7 @@ export class ExtensibleLogParser implements LogParser {
         }
       }
     }
-    
+
     // If no parser can handle it, return empty array
     console.warn('No suitable parser found for the log content');
     return [];
@@ -445,7 +442,7 @@ export async function loadLogs(logPathOrUrl: string): Promise<LogEntry[]> {
         if (logPathOrUrl.startsWith('http://') || logPathOrUrl.startsWith('https://')) {
           try {
             progress.report({ message: 'Fetching logs from URL...' });
-            
+
             // Fetch the content from the URL
             const response = await fetch(logPathOrUrl);
             if (!response.ok) {
@@ -453,7 +450,7 @@ export async function loadLogs(logPathOrUrl: string): Promise<LogEntry[]> {
             }
 
             rawContent = await response.text();
-            
+
             // Store the URL as the last successful URL
             await vscode.commands.executeCommand('setContext', 'traceback.lastSuccessfulUrl', logPathOrUrl);
           } catch (error: any) {
@@ -478,15 +475,15 @@ export async function loadLogs(logPathOrUrl: string): Promise<LogEntry[]> {
           // We need to dynamically import to avoid circular dependency
           const extensionModule = await import('./extension');
           const parser = extensionModule.logParserRegistry;
-          
+
           const logs = await parser.parse(rawContent);
-          
+
           if (logs.length > 0) {
             vscode.window.showInformationMessage(`Successfully loaded ${logs.length} log entries`);
           } else {
             vscode.window.showWarningMessage('No logs found or could not parse the log format');
           }
-          
+
           return logs;
         } catch (error) {
           console.error('Error parsing logs:', error);
@@ -545,7 +542,7 @@ export async function findCodeLocation(log: LogEntry, repoPath: string): Promise
     }, async (progress) => {
       // Extract searchable content from the log, prioritizing normalized fields
       let searchContent: string = log.message || '';
-      
+
       // If message is empty or too generic, try format-specific fields
       if (!searchContent || searchContent.trim().length < 3) {
         // Try Axiom format
@@ -565,17 +562,17 @@ export async function findCodeLocation(log: LogEntry, repoPath: string): Promise
           }
         }
       }
-      
+
       // If we still couldn't find anything searchable, we can't locate the source
       if (!searchContent || searchContent.trim().length < 3) {
         console.warn('No searchable content found in log entry');
         throw new Error('No searchable content found in log entry');
       }
-      
+
       // Extract target path hints from the log
       // Start with the unified target/serviceName fields
       let targetPath = log.target || log.serviceName || '';
-      
+
       // If no target found, try format-specific fields
       if (!targetPath) {
         if (log.axiomSpan) {
@@ -589,7 +586,7 @@ export async function findCodeLocation(log: LogEntry, repoPath: string): Promise
           targetPath = log.jsonPayload.target;
         }
       }
-      
+
       // Normalize the target path
       if (targetPath) {
         targetPath = targetPath.toLowerCase()
@@ -597,12 +594,12 @@ export async function findCodeLocation(log: LogEntry, repoPath: string): Promise
           .replace(/-/g, '_')
           .replace(/\s+/g, '_');
       }
-      
+
       progress.report({ message: 'Searching for matching source files...' });
-      
+
       // Search through source files
       let files = await findSourceFiles(repoPath);
-      
+
       // If we have a target path, prioritize files that match
       if (targetPath) {
         files.sort((a, b) => {
@@ -610,109 +607,109 @@ export async function findCodeLocation(log: LogEntry, repoPath: string): Promise
           const aBasename = path.basename(a).toLowerCase();
           const bBasename = path.basename(b).toLowerCase();
           const targetBasename = targetPath ? path.basename(targetPath).toLowerCase() : '';
-          
+
           // Check if the basename matches with or without extension
-          const aMatchesName = aBasename === targetBasename || 
-                              aBasename.startsWith(targetBasename + '.') || 
+          const aMatchesName = aBasename === targetBasename ||
+            aBasename.startsWith(targetBasename + '.') ||
                               aBasename.includes(targetBasename);
-          
-          const bMatchesName = bBasename === targetBasename || 
-                              bBasename.startsWith(targetBasename + '.') || 
+
+          const bMatchesName = bBasename === targetBasename ||
+            bBasename.startsWith(targetBasename + '.') ||
                               bBasename.includes(targetBasename);
-          
+
           if (aMatchesName && !bMatchesName) return -1;
           if (!aMatchesName && bMatchesName) return 1;
-          
+
           // Then check for path matches
           const aContainsTarget = a.includes(targetPath) ? -1 : 0;
           const bContainsTarget = b.includes(targetPath) ? -1 : 0;
           return aContainsTarget - bContainsTarget;
         });
       }
-      
+
       // Limit search to a reasonable number of files for performance
       const MAX_FILES_TO_SEARCH = 1000;
       if (files.length > MAX_FILES_TO_SEARCH) {
         console.warn(`Limiting search to ${MAX_FILES_TO_SEARCH} files out of ${files.length}`);
         files = files.slice(0, MAX_FILES_TO_SEARCH);
       }
-      
+
       // Find the best matches by scanning files for the search content
       let bestMatches: Array<{ file: string; line: number; score: number; fileScore: number }> = [];
-      
+
       // Calculate file relevance scores first (based on filename/path)
       const fileScores = new Map<string, number>();
       for (const file of files) {
         const relativePath = path.relative(repoPath, file);
         const fileName = path.basename(file).toLowerCase();
         const fileExt = path.extname(file).toLowerCase();
-        
+
         // Base file score
         let fileScore = 0;
-        
+
         // Boost score for files with relevant names
         if (targetPath && fileName.includes(path.basename(targetPath).toLowerCase())) {
           fileScore += 50; // Strong bonus for filename match
         }
-        
+
         // Boost for primary code files (not utility, config, etc)
-        const isPrimaryCodeFile = 
-          !fileName.includes('util') && 
-          !fileName.includes('helper') && 
-          !fileName.includes('common') && 
+        const isPrimaryCodeFile =
+          !fileName.includes('util') &&
+          !fileName.includes('helper') &&
+          !fileName.includes('common') &&
           !fileName.startsWith('_') &&
           !fileName.includes('test');
-          
+
         if (isPrimaryCodeFile) {
           fileScore += 20;
         }
-        
+
         // Boost for source files in key directories
-        const isInSourceDir = 
-          relativePath.includes('/src/') || 
-          relativePath.includes('/lib/') || 
-          relativePath.includes('/app/') || 
-          relativePath.startsWith('src/') || 
-          relativePath.startsWith('lib/') || 
+        const isInSourceDir =
+          relativePath.includes('/src/') ||
+          relativePath.includes('/lib/') ||
+          relativePath.includes('/app/') ||
+          relativePath.startsWith('src/') ||
+          relativePath.startsWith('lib/') ||
           relativePath.startsWith('app/');
-          
+
         if (isInSourceDir) {
           fileScore += 15;
         }
-        
+
         // Store the file score
         fileScores.set(file, fileScore);
       }
-      
+
       // Sort files by relevance score for prioritized search
       files.sort((a, b) => (fileScores.get(b) || 0) - (fileScores.get(a) || 0));
-      
+
       // Limit to most relevant files first
       const topFiles = files.slice(0, Math.min(files.length, 1000));
-      
+
       // Search through files in priority order
       let fileCount = 0;
       for (const file of topFiles) {
         fileCount++;
-        
+
         // Update progress occasionally
         if (fileCount % 50 === 0) {
           progress.report({ message: `Searched ${fileCount}/${topFiles.length} files...` });
         }
-        
+
         try {
           const content = fs.readFileSync(file, 'utf8');
           const lines = content.split('\n');
           const fileScore = fileScores.get(file) || 0;
-          
+
           // Check up to 5000 lines (for extremely large files)
           const maxLines = Math.min(lines.length, 5000);
-          
+
           for (let i = 0; i < maxLines; i++) {
             const line = lines[i];
             // Calculate a match score for this line
             const matchScore = calculateMatchScore(line, searchContent);
-            
+
             if (matchScore > 0) {
               // Combine line match score with file relevance score
               bestMatches.push({
@@ -727,14 +724,14 @@ export async function findCodeLocation(log: LogEntry, repoPath: string): Promise
           console.warn(`Error reading file ${file}:`, error);
         }
       }
-      
+
       // Sort by combined score (line match score + file relevance score)
       bestMatches.sort((a, b) => {
         const totalScoreA = a.score + a.fileScore;
         const totalScoreB = b.score + b.fileScore;
         return totalScoreB - totalScoreA;
       });
-      
+
       // Return the best match if any found
       if (bestMatches.length > 0) {
         return {
@@ -742,7 +739,7 @@ export async function findCodeLocation(log: LogEntry, repoPath: string): Promise
           line: bestMatches[0].line
         };
       }
-      
+
       throw new Error('No code location found');
     });
   } catch (error) {
@@ -761,30 +758,30 @@ function calculateMatchScore(line: string, searchContent: string): number {
                            .replace(/\/\*[\s\S]*?\*\//, '')  // C-style block comments
                            .replace(/#.*$/, '')  // Python/Ruby/Shell comments
                            .trim();
-  
+
   // Clean the line and search content for comparison
   const cleanedLine = strippedLine.toLowerCase();
   const cleanedSearch = searchContent.trim().toLowerCase();
-  
+
   // Skip empty lines after comment removal
   if (!cleanedLine) {
     return 0;
   }
-  
+
   // Quick check - if the search content isn't in the line at all, score is 0
   if (!cleanedLine.includes(cleanedSearch)) {
     return 0;
   }
-  
+
   // Base score for containing the search content
   let score = 10;
-  
+
   // Factors that suggest this is actual code that generated the log, not a log itself
-  
+
   // 1. Bonus for context clues indicating the line is inside actual code, not a printed log
-  const isLikelySourceCode = 
+  const isLikelySourceCode =
     // Contains code structure indicators
-    strippedLine.includes('{') || 
+    strippedLine.includes('{') ||
     strippedLine.includes('}') ||
     strippedLine.includes('(') ||
     strippedLine.includes(')') ||
@@ -794,40 +791,40 @@ function calculateMatchScore(line: string, searchContent: string): number {
     /[a-zA-Z0-9_]+ *= */.test(cleanedLine) ||
     // Contains method/function calls
     /[a-zA-Z0-9_]+\([^)]*\)/.test(cleanedLine);
-  
+
   if (isLikelySourceCode) {
     score += 15;
   }
-  
+
   // 2. Bonus for exact match but only if it appears to be source code
   if (cleanedLine === cleanedSearch && isLikelySourceCode) {
     score += 35;
   }
-  
+
   // 3. Significant bonus for line containing function/method declaration
-  if (cleanedLine.includes('function ') || 
-      cleanedLine.includes('def ') || 
-      cleanedLine.match(/^\s*(public|private|protected)?\s*(static)?\s*(async)?\s*\w+\s*\([^)]*\)/) || 
-      cleanedLine.includes(' fn ') || 
+  if (cleanedLine.includes('function ') ||
+    cleanedLine.includes('def ') ||
+    cleanedLine.match(/^\s*(public|private|protected)?\s*(static)?\s*(async)?\s*\w+\s*\([^)]*\)/) ||
+    cleanedLine.includes(' fn ') ||
       /\bfunc\s+\w+\s*\(/.test(cleanedLine)) { // Go
     score += 25;
   }
-  
+
   // 4. Bonus for line containing logging, printing or error statements - these are typically the source of logs
-  if (cleanedLine.includes('console.log') || 
-      cleanedLine.includes('console.error') || 
-      cleanedLine.includes('console.info') || 
-      cleanedLine.includes('console.warn') || 
-      cleanedLine.includes('println') || 
-      cleanedLine.includes('print(') || 
-      cleanedLine.includes('printf') || 
-      cleanedLine.includes('log.') || 
-      cleanedLine.includes('logger.') || 
+  if (cleanedLine.includes('console.log') ||
+    cleanedLine.includes('console.error') ||
+    cleanedLine.includes('console.info') ||
+    cleanedLine.includes('console.warn') ||
+    cleanedLine.includes('println') ||
+    cleanedLine.includes('print(') ||
+    cleanedLine.includes('printf') ||
+    cleanedLine.includes('log.') ||
+    cleanedLine.includes('logger.') ||
       /\blog\s*\(/.test(cleanedLine) ||
       cleanedLine.includes('throw new ')) {
     score += 20;
   }
-  
+
   // 5. Special bonus for common logging level patterns
   const loggingLevelPatterns = [
     /log\s*\.\s*(info|debug|warning|error|critical)\s*\(/i,
@@ -841,17 +838,17 @@ function calculateMatchScore(line: string, searchContent: string): number {
     /NSLog\s*\(/i, // Objective-C
     /Debug\s*\.\s*Log/i  // C#
   ];
-  
+
   for (const pattern of loggingLevelPatterns) {
     if (pattern.test(strippedLine)) {
       score += 25;
       break;
     }
   }
-  
+
   // Penalties for lines that are likely not the source of a log
-  
-  // 1. Penalty for likely being a printed log, not the source code 
+
+  // 1. Penalty for likely being a printed log, not the source code
   if (line.includes('│') || // Table/tree view character
       line.includes('|') || // Pipe character (often in logs)
       line.match(/\d{4}-\d{2}-\d{2}/) || // Date string
@@ -864,7 +861,7 @@ function calculateMatchScore(line: string, searchContent: string): number {
       line.includes('[TRACE]')) {
     score -= 40; // Large penalty for log-like lines
   }
-  
+
   // 2. Penalty for generated log data or serialized data (looks like a log, not like code)
   if (line.match(/^\s*{.*}$/) || // JSON-like
       line.match(/^\s*\[.*\]$/) || // Array-like
@@ -873,34 +870,34 @@ function calculateMatchScore(line: string, searchContent: string): number {
       line.includes(' = ') && line.includes(',') && !line.includes(';') && !line.includes('{')) { // Config-like
     score -= 30;
   }
-  
+
   // 3. Penalty for lines that are just imports or require statements
-  if (cleanedLine.startsWith('import ') || 
-      cleanedLine.startsWith('from ') || 
-      cleanedLine.startsWith('require(') || 
-      cleanedLine.startsWith('use ') || 
+  if (cleanedLine.startsWith('import ') ||
+    cleanedLine.startsWith('from ') ||
+    cleanedLine.startsWith('require(') ||
+    cleanedLine.startsWith('use ') ||
       cleanedLine.startsWith('include ')) {
     score -= 15;
   }
-  
+
   // 4. Penalty for documentation or comment markers
-  if (line.startsWith('/**') || 
-      line.startsWith('*') || 
-      line.startsWith(' *') || 
-      line.includes('TODO:') || 
-      line.includes('NOTE:') || 
-      line.includes('@param') || 
+  if (line.startsWith('/**') ||
+    line.startsWith('*') ||
+    line.startsWith(' *') ||
+    line.includes('TODO:') ||
+    line.includes('NOTE:') ||
+    line.includes('@param') ||
       line.includes('@return')) {
     score -= 20;
   }
-  
+
   // Bonus for search terms appearing as actual code elements
   // This looks for the search term as a complete word/identifier in the code
   const wordBoundaryRegex = new RegExp(`\\b${escapeRegExp(cleanedSearch)}\\b`, 'i');
   if (wordBoundaryRegex.test(cleanedLine)) {
     score += 10;
   }
-  
+
   return Math.max(0, score);
 }
 
@@ -969,7 +966,7 @@ async function findSourceFiles(dir: string): Promise<string[]> {
 
     for (const entry of entries) {
       const fullPath = path.join(dir, entry.name);
-      
+
       // Skip files/dirs that match exclude patterns explicitly
       if (shouldExcludePath(fullPath)) {
         continue;
@@ -977,7 +974,7 @@ async function findSourceFiles(dir: string): Promise<string[]> {
 
       if (entry.isDirectory()) {
         // Skip excluded directories
-        if (!skipDirs.has(entry.name.toLowerCase()) && 
+        if (!skipDirs.has(entry.name.toLowerCase()) &&
             !entry.name.toLowerCase().includes('log') && // Skip any dir with 'log' in the name
             !entry.name.toLowerCase().includes('test')) { // Skip test directories
           files.push(...await findSourceFiles(fullPath));
@@ -988,13 +985,13 @@ async function findSourceFiles(dir: string): Promise<string[]> {
         if (sourceExtensions.has(ext) && !excludedExtensions.has(ext)) {
           // Additional checks for filenames indicating logs
           const lowerName = entry.name.toLowerCase();
-          const isLikelyLogFile = 
-            lowerName.includes('log') || 
-            lowerName.includes('sample') || 
-            lowerName.includes('example') || 
+          const isLikelyLogFile =
+            lowerName.includes('log') ||
+            lowerName.includes('sample') ||
+            lowerName.includes('example') ||
             lowerName.includes('fixture') ||
             lowerName.includes('test');
-          
+
           if (!isLikelyLogFile) {
             try {
               // Quick check if file is readable and not too large
@@ -1023,9 +1020,9 @@ async function findSourceFiles(dir: string): Promise<string[]> {
  */
 function shouldExcludePath(filePath: string): boolean {
   const normalizedPath = filePath.toLowerCase();
-  
+
   // Exclude common paths that might contain log samples or test data
-  return normalizedPath.includes('/logs/') || 
+  return normalizedPath.includes('/logs/') ||
          normalizedPath.includes('/test/') ||
          normalizedPath.includes('/tests/') ||
          normalizedPath.includes('/fixtures/') ||

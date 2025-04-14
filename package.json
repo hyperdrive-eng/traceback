@@ -18,7 +18,7 @@
   "activationEvents": [
     "onView:logExplorer",
     "onView:logVariableExplorer",
-    "onView:callStackExplorer",
+    "onView:callStackExplorer", 
     "onCommand:traceback.showLogs",
     "onCommand:traceback.refreshLogs",
     "onCommand:traceback.createSampleLogs",
@@ -137,8 +137,7 @@
         {
           "id": "callStackExplorer",
           "name": "Call Stack",
-          "icon": "$(callstack-view-icon)",
-          "contextualTitle": "Call Stack Explorer"
+          "contextualTitle": "Call Stack"
         }
       ]
     },

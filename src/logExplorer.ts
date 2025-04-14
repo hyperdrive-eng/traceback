@@ -26,7 +26,6 @@ export interface LogEntry {
   jsonPayload: {
     fields: {
       message: string;
-      chain?: string;
       [key: string]: any;
     };
     level?: string;
@@ -199,41 +198,62 @@ export class LogExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
     if (!element) {
       if (this.sortByTime) {
         // Get all logs and sort by timestamp
-        const allLogs = Array.from(this.spanMap.values()).flat()
+        const allLogs = Array.from(this.spanMap.values())
+          .flat()
           .filter(log => this.selectedLogLevels.has(log.severity.toUpperCase()))
-          .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+          .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()); // Reverse chronological order
 
-        // For logs without jsonPayload, show them individually
-        const ungroupedLogs = allLogs.filter(log => !log.jsonPayload && !log.axiomSpan);
-        if (ungroupedLogs.length > 0) {
-          return Promise.resolve(
-            ungroupedLogs.map(log => new LogTreeItem(log))
-          );
-        }
-
-        // For logs with jsonPayload, group them as before
+        // Group consecutive logs from the same group
         const result: vscode.TreeItem[] = [];
         let currentGroup: LogEntry[] = [];
         let currentGroupName: string | null = null;
 
-        allLogs
-          .filter(log => log.jsonPayload || log.axiomSpan)
-          .forEach((log) => {
-            const groupName = this.getGroupName(log);
+        allLogs.forEach((log) => {
+          // Handle logs without any group information
+          if (!log.jsonPayload?.target && !log.jsonPayload?.span && !log.jaegerSpan && !log.axiomSpan) {
+            // Add ungrouped logs directly as individual items
+            result.push(new LogTreeItem(log));
+            return;
+          }
 
-            if (groupName === currentGroupName) {
-              currentGroup.push(log);
-            } else {
-              if (currentGroup.length > 0) {
-                result.push(new SpanGroupItem(currentGroupName!, currentGroup, vscode.TreeItemCollapsibleState.Expanded));
+          const groupName = this.getGroupName(log);
+          
+          if (groupName === currentGroupName) {
+            // Add to current group if from same group
+            currentGroup.push(log);
+          } else {
+            // Create group item for previous group if it exists
+            if (currentGroup.length > 0) {
+              if (currentGroup.length === 1) {
+                // If group has only one log, add it as individual item
+                result.push(new LogTreeItem(currentGroup[0]));
+              } else {
+                // If group has multiple logs, create a group item
+                result.push(new SpanGroupItem(
+                  currentGroupName!,
+                  currentGroup,
+                  vscode.TreeItemCollapsibleState.Expanded
+                ));
               }
-              currentGroupName = groupName;
-              currentGroup = [log];
             }
-          });
+            
+            // Start new group
+            currentGroupName = groupName;
+            currentGroup = [log];
+          }
+        });
 
+        // Handle the last group
         if (currentGroup.length > 0) {
-          result.push(new SpanGroupItem(currentGroupName!, currentGroup, vscode.TreeItemCollapsibleState.Expanded));
+          if (currentGroup.length === 1) {
+            result.push(new LogTreeItem(currentGroup[0]));
+          } else {
+            result.push(new SpanGroupItem(
+              currentGroupName!,
+              currentGroup,
+              vscode.TreeItemCollapsibleState.Expanded
+            ));
+          }
         }
 
         return Promise.resolve(result);
@@ -272,7 +292,7 @@ export class LogExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
         // Add ungrouped logs as individual items
         if (ungroupedLogs.length > 0) {
           result.push(...ungroupedLogs
-            .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
+            .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()) // Sort ungrouped logs in reverse chronological order
             .map(log => new LogTreeItem(log))
           );
         }
@@ -281,7 +301,9 @@ export class LogExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
       }
     } else if (element instanceof SpanGroupItem) {
       return Promise.resolve(
-        element.logs.map(log => new LogTreeItem(log))
+        element.logs
+          .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()) // Sort group logs in reverse chronological order
+          .map(log => new LogTreeItem(log))
       );
     }
     return Promise.resolve([]);

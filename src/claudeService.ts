@@ -155,17 +155,21 @@ Rules for variables:
                 body: JSON.stringify(request)
             });
 
-            if (!response.ok) {
-                const errorText = await response.text();
-                throw new Error(`Claude API error: ${response.statusText}\nDetails: ${errorText}`);
+            let responseData;
+            try {
+                responseData = await response.json();
+            } catch (e) {
+                throw new Error(`Invalid JSON response: ${e}`);
             }
 
-            const data = await response.json();
+            if (!response.ok) {
+                throw new Error(`Claude API error: ${response.statusText}\nDetails: ${JSON.stringify(responseData)}`);
+            }
 
-            if (!data.content || !data.content[0] || !data.content[0].type || !(data.content[0].type === 'tool_use')) {
+            if (!responseData.content || !responseData.content[0] || !responseData.content[0].type || !(responseData.content[0].type === 'tool_use')) {
                 throw new Error('Invalid response format from Claude API');
             }
-            return (data.content[0].input) as LLMLogAnalysis;
+            return (responseData.content[0].input) as LLMLogAnalysis;
         } catch (error) {
             console.error('Error calling Claude API:', error);
             throw error;
@@ -277,18 +281,22 @@ Use the analyze_callers function to return the results in the exact format requi
                 body: JSON.stringify(request)
             });
 
-            if (!response.ok) {
-                const errorText = await response.text();
-                throw new Error(`Claude API error: ${response.statusText}\nDetails: ${errorText}`);
+            let responseData;
+            try {
+                responseData = await response.json();
+            } catch (e) {
+                throw new Error(`Invalid JSON response: ${e}`);
             }
 
-            const data = await response.json();
+            if (!response.ok) {
+                throw new Error(`Claude API error: ${response.statusText}\nDetails: ${JSON.stringify(responseData)}`);
+            }
 
-            if (!data.content || !data.content[0] || !(data.content[0].type === 'tool_use')) {
+            if (!responseData.content || !responseData.content[0] || !(responseData.content[0].type === 'tool_use')) {
                 throw new Error('Invalid response format: missing tool_calls');
             }
 
-            return (data.content[0].input) as CallerAnalysis;
+            return (responseData.content[0].input) as CallerAnalysis;
         } catch (error) {
             console.error('Error calling Claude API:', error);
             throw error;
