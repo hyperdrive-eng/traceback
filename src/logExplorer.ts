@@ -4,7 +4,6 @@ import * as path from 'path';
 import dayjs from 'dayjs';
 import { findCodeLocation, loadLogs } from './processor';
 import { logLineDecorationType, variableValueDecorationType, clearDecorations } from './decorations';
-import { PinnedLogsProvider } from './pinnedLogsProvider';
 import { CallerAnalysis, ClaudeService, LLMLogAnalysis } from './claudeService';
 
 // Core interfaces for log structure
@@ -162,7 +161,6 @@ export class LogExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
       explanation: string;
     }>) => void
   } | undefined;
-  private pinnedLogsProvider: PinnedLogsProvider | undefined;
   private claudeService: ClaudeService = ClaudeService.getInstance();
 
   constructor(context: vscode.ExtensionContext) {
@@ -220,12 +218,6 @@ export class LogExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
     this.callStackExplorerProvider = provider;
   }
 
-  /**
-   * Set the pinned logs provider to check pin status
-   */
-  public setPinnedLogsProvider(provider: PinnedLogsProvider): void {
-    this.pinnedLogsProvider = provider;
-  }
 
   refresh(): void {
     this.loadLogs();
@@ -248,7 +240,7 @@ export class LogExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
         const ungroupedLogs = allLogs.filter(log => !log.jsonPayload && !log.jaegerSpan && !log.axiomSpan);
         if (ungroupedLogs.length > 0) {
           return Promise.resolve(
-            ungroupedLogs.map(log => new LogTreeItem(log, this.pinnedLogsProvider?.isPinned(log) ?? false))
+            ungroupedLogs.map(log => new LogTreeItem(log, false))
           );
         }
 
@@ -314,7 +306,7 @@ export class LogExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
         if (ungroupedLogs.length > 0) {
           result.push(...ungroupedLogs
             .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
-            .map(log => new LogTreeItem(log, this.pinnedLogsProvider?.isPinned(log) ?? false))
+            .map(log => new LogTreeItem(log, false))
           );
         }
 
@@ -324,7 +316,7 @@ export class LogExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
       return Promise.resolve(
         element.logs.map(log => new LogTreeItem(
           log,
-          this.pinnedLogsProvider?.isPinned(log) ?? false
+          false
         ))
       );
     }
@@ -943,9 +935,6 @@ export class LogTreeItem extends vscode.TreeItem {
 
     this.description = `(${relativeTime})`;
 
-    // Set contextValue for pin/unpin menu visibility
-    this.contextValue = isPinned ? 'pinned' : 'unpinned';
-
     // Set the icon based on severity
     this.iconPath = this.getIcon(log.severity);
 
@@ -960,9 +949,7 @@ export class LogTreeItem extends vscode.TreeItem {
     const tooltipDetails = [
       `Time: ${new Date(log.timestamp).toLocaleString()}`,
       `Level: ${log.severity}`,
-      `Location: ${location}`,
-      '',
-      isPinned ? 'Click to unpin' : 'Click to pin'
+      `Location: ${location}`
     ];
 
     const tooltip = new vscode.MarkdownString(tooltipDetails.join('\n\n'));

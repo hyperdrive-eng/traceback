@@ -2,7 +2,7 @@
   "name": "traceback",
   "displayName": "TraceBack",
   "description": "A VS Code extension that brings telemetry data (traces, logs, and metrics) into your code.",
-  "version": "0.4.3",
+  "version": "0.4.4",
   "repository": {
     "type": "git",
     "url": "https://github.com/hyperdrive-eng/traceback.git"
@@ -18,8 +18,7 @@
   "activationEvents": [
     "onView:logExplorer",
     "onView:logVariableExplorer",
-    "onView:callStackExplorer",
-    "onView:pinnedLogs",
+    "onView:callStackExplorer", 
     "onCommand:traceback.showLogs",
     "onCommand:traceback.refreshLogs",
     "onCommand:traceback.createSampleLogs",
@@ -70,21 +69,6 @@
       {
         "command": "traceback.clearExplorers",
         "title": "Clear Views",
-        "icon": "$(clear-all)"
-      },
-      {
-        "command": "traceback.pinLog",
-        "title": "Pin Log",
-        "icon": "$(pin)"
-      },
-      {
-        "command": "traceback.unpinLog",
-        "title": "Unpin Log",
-        "icon": "$(pinned)"
-      },
-      {
-        "command": "traceback.clearPins",
-        "title": "Clear All Pins",
         "icon": "$(clear-all)"
       },
       {
@@ -148,11 +132,6 @@
           "id": "callStackExplorer",
           "name": "Call Stack",
           "contextualTitle": "Call Stack"
-        },
-        {
-          "id": "pinnedLogs",
-          "name": "Pinned Logs",
-          "contextualTitle": "Pinned Logs"
         }
       ]
     },
@@ -172,11 +151,6 @@
           "command": "traceback.openSettings",
           "when": "view == logExplorer",
           "group": "navigation@3"
-        },
-        {
-          "command": "traceback.clearPins",
-          "when": "view == pinnedLogs",
-          "group": "navigation"
         }
       ],
       "view/item/context": [
@@ -184,16 +158,6 @@
           "command": "traceback.copySpanValue",
           "when": "viewItem == spanDetail",
           "group": "inline"
-        },
-        {
-          "command": "traceback.pinLog",
-          "when": "view == logExplorer && viewItem == unpinned",
-          "group": "inline@1"
-        },
-        {
-          "command": "traceback.unpinLog",
-          "when": "view == logExplorer && viewItem == pinned || view == pinnedLogs && viewItem == pinned",
-          "group": "inline@1"
         }
       ]
     },
