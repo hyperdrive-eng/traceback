@@ -234,6 +234,8 @@ export class LogExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
     this.loadLogs();
     this._onDidChangeTreeData.fire();
 
+    // Clear selection in the logs view
+    vscode.commands.executeCommand('list.clear');
   }
 
   getTreeItem(element: vscode.TreeItem): vscode.TreeItem {
