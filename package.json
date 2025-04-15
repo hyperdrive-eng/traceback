@@ -11,6 +11,7 @@
   "engines": {
     "vscode": "^1.74.0"
   },
+  "icon": "./resources/hyperdrive-logo.png",
   "categories": [
     "Debuggers",
     "Visualization"
