@@ -3,6 +3,7 @@
   "displayName": "TraceBack",
   "description": "A VS Code extension that brings telemetry data (traces, logs, and metrics) into your code.",
   "version": "0.4.5",
+  "publisher": "hyperdrive-eng",
   "repository": {
     "type": "git",
     "url": "https://github.com/hyperdrive-eng/traceback.git"
