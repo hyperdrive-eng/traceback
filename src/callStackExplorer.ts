@@ -37,7 +37,6 @@ export class CallStackTreeItem extends vscode.TreeItem {
     );
 
     this.description = caller.confidence ? `(${Math.round(caller.confidence * 100)}% confidence)` : '';
-    this.tooltip = caller.explanation || caller.code;
     this.iconPath = new vscode.ThemeIcon(
       caller.confidence > 0.7 ? 'debug-stackframe-focused' : 'debug-stackframe'
     );
