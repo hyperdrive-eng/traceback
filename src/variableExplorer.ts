@@ -222,7 +222,6 @@ export class VariableExplorerProvider implements vscode.TreeDataProvider<Variabl
       // Add a header showing the log message
       const headerMessage = this.currentLog.message || 
                             (this.currentLog.jsonPayload?.fields?.message) || 
-                            (this.currentLog.jaegerSpan?.operationName) ||
                             'Log Entry';
       
       // For the header, we'll use the entire log object as the value for inspection
@@ -249,112 +248,58 @@ export class VariableExplorerProvider implements vscode.TreeDataProvider<Variabl
         ));
       }
       
-      // Handle Jaeger trace format
-      if (this.currentLog.jaegerSpan) {
-        // Add span information section
+      // Handle log format
+      // Add common sections
+      
+      // Fields section
+      const fields = this.currentLog.jsonPayload?.fields;
+      if (fields && Object.keys(fields).length > 0) {
+        items.push(new VariableItem(
+          'Fields',
+          fields,
+          'Fields', // Use 'Fields' as specific type to filter message in children
+          vscode.TreeItemCollapsibleState.Expanded
+        ));
+      }
+      
+      // Span information
+      if (this.currentLog.jsonPayload?.span) {
         items.push(new VariableItem(
           'Span',
-          this.currentLog.jaegerSpan,
+          this.currentLog.jsonPayload.span,
           'section',
           vscode.TreeItemCollapsibleState.Expanded
         ));
-        
-        // Extract tags into their own section for easier viewing
-        if (this.currentLog.jaegerSpan.tags && this.currentLog.jaegerSpan.tags.length > 0) {
-          // Convert tags array to an object for easier viewing
-          const tagsObject: Record<string, any> = {};
-          for (const tag of this.currentLog.jaegerSpan.tags) {
-            tagsObject[tag.key] = tag.value;
-          }
-          
-          items.push(new VariableItem(
-            'Tags',
-            tagsObject,
-            'section',
-            vscode.TreeItemCollapsibleState.Expanded
-          ));
-        }
-        
-        // Extract span logs into their own section
-        if (this.currentLog.jaegerSpan.logs && this.currentLog.jaegerSpan.logs.length > 0) {
-          items.push(new VariableItem(
-            'Span Logs',
-            this.currentLog.jaegerSpan.logs,
-            'section',
-            vscode.TreeItemCollapsibleState.Collapsed
-          ));
-        }
-        
-        // Add process information if available
-        if (this.currentLog.serviceName) {
-          const serviceInfo = {
-            name: this.currentLog.serviceName,
-            spanId: this.currentLog.jaegerSpan.spanID,
-            parentSpanId: this.currentLog.parentSpanID
-          };
-          
-          items.push(new VariableItem(
-            'Service',
-            serviceInfo,
-            'section',
-            vscode.TreeItemCollapsibleState.Collapsed
-          ));
-        }
       }
-      // Handle original log format
-      else {
-        // Add common sections
-        
-        // Fields section
-        const fields = this.currentLog.jsonPayload?.fields;
-        if (fields && Object.keys(fields).length > 0) {
-          items.push(new VariableItem(
-            'Fields',
-            fields,
-            'Fields', // Use 'Fields' as specific type to filter message in children
-            vscode.TreeItemCollapsibleState.Expanded
-          ));
-        }
-        
-        // Span information
-        if (this.currentLog.jsonPayload?.span) {
-          items.push(new VariableItem(
-            'Span',
-            this.currentLog.jsonPayload.span,
-            'section',
-            vscode.TreeItemCollapsibleState.Expanded
-          ));
-        }
-        
-        // Multiple spans array
-        if (this.currentLog.jsonPayload?.spans && this.currentLog.jsonPayload.spans.length > 0) {
-          items.push(new VariableItem(
-            'Spans',
-            this.currentLog.jsonPayload.spans,
-            'section',
-            vscode.TreeItemCollapsibleState.Collapsed
-          ));
-        }
-        
-        // Labels
-        if (this.currentLog.labels && Object.keys(this.currentLog.labels).length > 0) {
-          items.push(new VariableItem(
-            'Labels',
-            this.currentLog.labels,
-            'section',
-            vscode.TreeItemCollapsibleState.Collapsed
-          ));
-        }
-        
-        // Resource information
-        if (this.currentLog.resource) {
-          items.push(new VariableItem(
-            'Resource',
-            this.currentLog.resource,
-            'section',
-            vscode.TreeItemCollapsibleState.Collapsed
-          ));
-        }
+      
+      // Multiple spans array
+      if (this.currentLog.jsonPayload?.spans && this.currentLog.jsonPayload.spans.length > 0) {
+        items.push(new VariableItem(
+          'Spans',
+          this.currentLog.jsonPayload.spans,
+          'section',
+          vscode.TreeItemCollapsibleState.Collapsed
+        ));
+      }
+      
+      // Labels
+      if (this.currentLog.labels && Object.keys(this.currentLog.labels).length > 0) {
+        items.push(new VariableItem(
+          'Labels',
+          this.currentLog.labels,
+          'section',
+          vscode.TreeItemCollapsibleState.Collapsed
+        ));
+      }
+      
+      // Resource information
+      if (this.currentLog.resource) {
+        items.push(new VariableItem(
+          'Resource',
+          this.currentLog.resource,
+          'section',
+          vscode.TreeItemCollapsibleState.Collapsed
+        ));
       }
       
       // Basic log metadata for all log types

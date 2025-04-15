@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { LogEntry, Span, JaegerSpan } from './logExplorer';
+import { LogEntry, Span } from './logExplorer';
 import { CallerAnalysis } from './claudeService';
 import { ClaudeService } from './claudeService';
 import * as path from 'path';
@@ -414,7 +414,6 @@ export class CallStackExplorerProvider implements vscode.TreeDataProvider<CallSt
       const allLogLines = allLogs.map(log =>
         log.message ||
         log.jsonPayload?.fields?.message ||
-        log.jaegerSpan?.operationName ||
         ''
       ).filter(msg => msg);
 
