@@ -181,7 +181,7 @@ export class VariableExplorerProvider implements vscode.TreeDataProvider<Variabl
     if (this.isAnalyzing) {
       return Promise.resolve([
         new VariableItem(
-          '$(sync~spin) Analyzing variables...',
+          'Analyzing variables...',
           'Please wait while we analyze the log',
           'message',
           vscode.TreeItemCollapsibleState.None
