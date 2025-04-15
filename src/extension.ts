@@ -22,7 +22,7 @@ export function activate(context: vscode.ExtensionContext) {
   const variableDecorator = new VariableDecorator(context);
 
   // Register the tree view
-  const logExplorerTreeView = vscode.window.createTreeView("logExplorer", {
+  const treeView = vscode.window.createTreeView("logExplorer", {
     treeDataProvider: logExplorerProvider,
     showCollapseAll: false,
   });
@@ -31,12 +31,6 @@ export function activate(context: vscode.ExtensionContext) {
   variableExplorerProvider.setVariableDecorator(variableDecorator);
   logExplorerProvider.setVariableExplorer(variableExplorerProvider);
   logExplorerProvider.setCallStackExplorer(callStackExplorerProvider);
-
-  // Create the tree view
-  const treeView = vscode.window.createTreeView("logExplorer", {
-    treeDataProvider: logExplorerProvider,
-    showCollapseAll: false,
-  });
 
   // Register commands
   const refreshCommand = vscode.commands.registerCommand("traceback.refreshLogs", () => {
@@ -331,16 +325,24 @@ export function activate(context: vscode.ExtensionContext) {
   );
 
   context.subscriptions.push(
-    logExplorerTreeView,
+    treeView,
     openSettingsCommand,
     refreshCommand,
+    showLogsCommand,
     filterCommand,
+    setLogPathCommand,
     setRepoPathCommand,
+    resetLogPathCommand,
     clearExplorersCommand,
     loadJaegerTraceCommand,
     setJaegerEndpointCommand,
     loadAxiomTraceCommand,
-    setAxiomDatasetCommand
+    setAxiomDatasetCommand,
+    storeAxiomTokenCommand,
+    getAxiomTokenCommand,
+    getAxiomDatasetCommand,
+    registerLogParserCommand,
+    openCallStackLocationCommand
   );
 
   // Initial refresh
