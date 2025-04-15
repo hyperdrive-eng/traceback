@@ -165,6 +165,7 @@ export class LogExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
 
   constructor(context: vscode.ExtensionContext) {
     this.context = context;
+
     vscode.commands.registerCommand('traceback.openLog', (log: LogEntry) => this.openLog(log));
     vscode.commands.registerCommand('traceback.toggleSort', () => this.toggleSort());
 
@@ -219,8 +220,20 @@ export class LogExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
   }
 
   refresh(): void {
+    // Clear decorations from editor
+    clearDecorations();
+
+    // Clear variable and call stack explorers
+    if (this.variableExplorerProvider) {
+      this.variableExplorerProvider.setLog(undefined);
+    }
+    if (this.callStackExplorerProvider) {
+      this.callStackExplorerProvider.setLogEntry(undefined);
+    }
+
     this.loadLogs();
     this._onDidChangeTreeData.fire();
+
   }
 
   getTreeItem(element: vscode.TreeItem): vscode.TreeItem {
@@ -367,6 +380,13 @@ export class LogExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
 
       // Load new logs
       this.logs = await loadLogs(logPath);
+
+      // Clear all caches from loaded logs
+      this.logs.forEach(log => {
+        log.codeLocationCache = undefined;
+        log.callStackCache = undefined;
+        log.claudeAnalysis = undefined;
+      });
 
       // Group logs by span name
       this.spanMap.clear();
