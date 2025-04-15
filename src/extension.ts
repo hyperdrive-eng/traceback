@@ -108,7 +108,6 @@ export function activate(context: vscode.ExtensionContext) {
     "traceback.resetLogPath",
     async () => {
       await context.globalState.update("logFilePath", undefined);
-      await context.globalState.update("jaegerTraceId", undefined); // Also clear Jaeger trace ID
       updateStatusBars(); // Update all status bars
       logExplorerProvider.refresh();
     }
@@ -123,87 +122,6 @@ export function activate(context: vscode.ExtensionContext) {
     }
   );
 
-  // Command to load a Jaeger trace from a URL
-  const loadJaegerTraceCommand = vscode.commands.registerCommand(
-    "traceback.loadJaegerTrace",
-    async () => {
-      // First, ask for Jaeger endpoint if not set
-      let jaegerEndpoint = context.globalState.get<string>("jaegerEndpoint");
-
-      if (!jaegerEndpoint) {
-        jaegerEndpoint = await vscode.window.showInputBox({
-          prompt: "Enter Jaeger API endpoint (leave empty for default)",
-          placeHolder: "http://localhost:8080/jaeger/ui/api/traces",
-          value: "http://localhost:8080/jaeger/ui/api/traces"
-        });
-
-        if (!jaegerEndpoint) {
-          // User canceled or provided empty input, use default
-          jaegerEndpoint = "http://localhost:8080/jaeger/ui/api/traces";
-        }
-
-        await context.globalState.update("jaegerEndpoint", jaegerEndpoint);
-      }
-
-      // Now ask for the trace ID
-      const traceId = await vscode.window.showInputBox({
-        prompt: "Enter Jaeger trace ID",
-        placeHolder: "f5c6e9a0a31dd1ed034ba48c41fe4119",
-        validateInput: (value) => {
-          // Simple validation for non-empty input
-          return value.trim() ? null : "Trace ID cannot be empty";
-        }
-      });
-
-      if (!traceId) {
-        // User canceled
-        return;
-      }
-
-      // Construct the full URL
-      const fullUrl = `${jaegerEndpoint}/${traceId}`;
-
-      // Store the trace ID
-      await context.globalState.update("jaegerTraceId", traceId);
-      await context.globalState.update("logFilePath", fullUrl);
-
-      // Update status bars and refresh logs
-      updateStatusBars();
-      logExplorerProvider.refresh();
-
-      // Show information message
-      vscode.window.showInformationMessage(`Loading Jaeger trace: ${traceId}`);
-    }
-  );
-
-  // Command to change Jaeger endpoint
-  const setJaegerEndpointCommand = vscode.commands.registerCommand(
-    "traceback.setJaegerEndpoint",
-    async () => {
-      const currentEndpoint = context.globalState.get<string>("jaegerEndpoint") || "http://localhost:8080/jaeger/ui/api/traces";
-
-      const newEndpoint = await vscode.window.showInputBox({
-        prompt: "Enter Jaeger API endpoint",
-        placeHolder: "http://localhost:8080/jaeger/ui/api/traces",
-        value: currentEndpoint
-      });
-
-      if (newEndpoint) {
-        await context.globalState.update("jaegerEndpoint", newEndpoint);
-        vscode.window.showInformationMessage(`Jaeger endpoint set to: ${newEndpoint}`);
-
-        // If there's a trace ID loaded, refresh with the new endpoint
-        const currentTraceId = context.globalState.get<string>("jaegerTraceId");
-        if (currentTraceId) {
-          const fullUrl = `${newEndpoint}/${currentTraceId}`;
-          await context.globalState.update("logFilePath", fullUrl);
-          logExplorerProvider.refresh();
-        }
-
-        updateStatusBars();
-      }
-    }
-  );
 
   // Command to store Axiom API token securely
   const storeAxiomTokenCommand = vscode.commands.registerCommand(
@@ -334,8 +252,6 @@ export function activate(context: vscode.ExtensionContext) {
     setRepoPathCommand,
     resetLogPathCommand,
     clearExplorersCommand,
-    loadJaegerTraceCommand,
-    setJaegerEndpointCommand,
     loadAxiomTraceCommand,
     setAxiomDatasetCommand,
     storeAxiomTokenCommand,

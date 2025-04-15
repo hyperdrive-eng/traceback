@@ -14,50 +14,6 @@ export interface Span {
   [key: string]: any;
 }
 
-// Jaeger trace specific interfaces
-export interface JaegerSpan {
-  traceID: string;
-  spanID: string;
-  operationName: string;
-  references?: {
-    refType: string;
-    traceID: string;
-    spanID: string;
-  }[];
-  startTime: number;
-  duration: number;
-  tags: {
-    key: string;
-    type: string;
-    value: any;
-  }[];
-  logs: {
-    timestamp: number;
-    fields: {
-      key: string;
-      type: string;
-      value: any;
-    }[];
-  }[];
-  processID: string;
-  warnings: string[] | null;
-}
-
-export interface JaegerTrace {
-  traceID: string;
-  spans: JaegerSpan[];
-  processes: {
-    [processID: string]: {
-      serviceName: string;
-      tags: {
-        key: string;
-        type: string;
-        value: any;
-      }[];
-    };
-  };
-  warnings: string[] | null;
-}
 
 export interface LogEntry {
   // Common fields for all log types
@@ -94,9 +50,6 @@ export interface LogEntry {
     };
     type: string;
   };
-
-  // Jaeger trace specific fields
-  jaegerSpan?: JaegerSpan;
 
   // Axiom trace specific fields
   axiomSpan?: any; // Using 'any' for flexibility with Axiom's response format
@@ -251,7 +204,7 @@ export class LogExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
           .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
 
         // For logs without jsonPayload, show them individually
-        const ungroupedLogs = allLogs.filter(log => !log.jsonPayload && !log.jaegerSpan && !log.axiomSpan);
+        const ungroupedLogs = allLogs.filter(log => !log.jsonPayload && !log.axiomSpan);
         if (ungroupedLogs.length > 0) {
           return Promise.resolve(
             ungroupedLogs.map(log => new LogTreeItem(log))
@@ -264,7 +217,7 @@ export class LogExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
         let currentGroupName: string | null = null;
 
         allLogs
-          .filter(log => log.jsonPayload || log.jaegerSpan || log.axiomSpan)
+          .filter(log => log.jsonPayload || log.axiomSpan)
           .forEach((log) => {
             const groupName = this.getGroupName(log);
 
@@ -293,7 +246,7 @@ export class LogExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
           .flat()
           .filter(log => this.selectedLogLevels.has(log.severity))
           .forEach(log => {
-            if (!log.jsonPayload && !log.jaegerSpan && !log.axiomSpan) {
+            if (!log.jsonPayload && !log.axiomSpan) {
               ungroupedLogs.push(log);
             } else {
               const groupName = this.getGroupName(log);
@@ -335,13 +288,6 @@ export class LogExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
   }
 
   private getGroupName(log: LogEntry): string {
-    // Handle Jaeger trace format
-    if (log.jaegerSpan) {
-      const serviceName = log.serviceName || 'unknown-service';
-      const operationName = log.jaegerSpan.operationName || 'unknown-operation';
-      return `${serviceName}::${operationName}`;
-    }
-
     // Handle Axiom trace format
     if (log.axiomSpan) {
       const serviceName = log.serviceName || log.axiomSpan['service.name'] || 'unknown-service';
@@ -398,18 +344,13 @@ export class LogExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
 
       this.logs.forEach(log => {
         // If log has no jsonPayload and no special formats, add to ungrouped
-        if (!log.jsonPayload && !log.jaegerSpan && !log.axiomSpan) {
+        if (!log.jsonPayload && !log.axiomSpan) {
           ungroupedLogs.push(log);
           return;
         }
 
         let spanName: string;
-        if (log.jaegerSpan) {
-          // For Jaeger format, use a combination of service and operation name
-          const serviceName = log.serviceName || 'unknown';
-          const operationName = log.jaegerSpan.operationName || 'unknown';
-          spanName = `${serviceName}::${operationName}`;
-        } else if (log.axiomSpan) {
+        if (log.axiomSpan) {
           // For Axiom format
           const serviceName = log.serviceName || log.axiomSpan['service.name'] || 'unknown';
           const operationName = log.axiomSpan.name || 'unknown';
@@ -866,35 +807,8 @@ export class LogTreeItem extends vscode.TreeItem {
   constructor(public readonly log: LogEntry) {
     let fullMessage: string;
 
-    // Handle Jaeger trace format
-    if (log.jaegerSpan) {
-      // Use operationName as the main message
-      const operationName = log.jaegerSpan.operationName;
-
-      // Extract an event message if available (from log entries)
-      let eventMessage = '';
-      if (log.jaegerSpan.logs && log.jaegerSpan.logs.length > 0) {
-        // Find event field in the first log entry
-        const eventField = log.jaegerSpan.logs[0].fields.find(field => field.key === 'event');
-        if (eventField) {
-          eventMessage = ` - ${eventField.value}`;
-        }
-      }
-
-      // Look for important tags to display
-      let tagInfo = '';
-      const importantTags = ['http.method', 'http.status_code', 'error', 'rpc.method'];
-      for (const tagName of importantTags) {
-        const tag = log.jaegerSpan.tags.find(t => t.key === tagName);
-        if (tag) {
-          tagInfo += ` [${tag.key}=${tag.value}]`;
-        }
-      }
-
-      fullMessage = `${operationName}${eventMessage}${tagInfo}`;
-    }
     // Handle Axiom trace format
-    else if (log.axiomSpan) {
+    if (log.axiomSpan) {
       // Use span name as the main message
       const operationName = log.axiomSpan.name || 'Unknown operation';
 
@@ -936,7 +850,7 @@ export class LogTreeItem extends vscode.TreeItem {
     super(truncatedMessage, vscode.TreeItemCollapsibleState.None);
 
     // Generate a unique ID by combining available identifiers with a counter
-    this.id = log.insertId || log.jaegerSpan?.spanID || `${log.timestamp}_${LogTreeItem.idCounter++}`;
+    this.id = log.insertId || `${log.timestamp}_${LogTreeItem.idCounter++}`;
 
     // Initialize first log time if not set
     if (LogTreeItem.firstLogTime === null) {

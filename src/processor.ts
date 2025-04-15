@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { LogEntry, JaegerTrace, JaegerSpan } from './logExplorer';
+import { LogEntry } from './logExplorer';
 import { logLineDecorationType } from './decorations';
 import fetch from 'node-fetch';
 import { Axiom } from '@axiomhq/js';
@@ -239,31 +239,6 @@ export class JsonLogParser implements LogParser {
   }
 }
 
-/**
- * Parser for Jaeger trace format
- */
-export class JaegerLogParser implements LogParser {
-  canParse(content: string): boolean {
-    try {
-      const parsed = JSON.parse(content);
-      return parsed.data && Array.isArray(parsed.data) && 
-             parsed.data.length > 0 && 
-             parsed.data[0].spans !== undefined;
-    } catch (error) {
-      return false;
-    }
-  }
-
-  async parse(content: string): Promise<LogEntry[]> {
-    try {
-      const parsed = JSON.parse(content);
-      return processJaegerFormat(parsed, content);
-    } catch (error) {
-      console.error('Error parsing Jaeger logs:', error);
-      return [];
-    }
-  }
-}
 
 /**
  * Parser for plaintext logs with common formats
@@ -407,7 +382,6 @@ export class ExtensibleLogParser implements LogParser {
   
   constructor() {
     // Register built-in parsers
-    this.registerParser(new JaegerLogParser());
     this.registerParser(new JsonLogParser());
     this.registerParser(new PlainTextLogParser());
   }
@@ -528,102 +502,6 @@ export async function loadLogs(logPathOrUrl: string): Promise<LogEntry[]> {
   }
 }
 
-/**
- * Process Jaeger trace format into LogEntry objects
- */
-function processJaegerFormat(parsedData: any, rawContent: string): LogEntry[] {
-  const logs: LogEntry[] = [];
-
-  // Process each trace in the data array
-  for (const trace of parsedData.data) {
-    const traceId = trace.traceID;
-
-    // Create a map of span IDs for quicker parent reference lookup
-    const spanMap = new Map<string, JaegerSpan>();
-    for (const span of trace.spans) {
-      spanMap.set(span.spanID, span);
-    }
-
-    // Convert each span to a LogEntry
-    for (const span of trace.spans) {
-      // Find parent span ID if it exists
-      let parentSpanID: string | undefined;
-      if (span.references && span.references.length > 0) {
-        const childOfRef = span.references.find((ref: any) => ref.refType === 'CHILD_OF');
-        if (childOfRef) {
-          parentSpanID = childOfRef.spanID;
-        }
-      }
-
-      // Get service name from the process
-      const process = trace.processes[span.processID];
-      const serviceName = process ? process.serviceName : 'unknown';
-
-      // Map severity from span attributes
-      // Use span.kind, error tags, or status_code to determine severity
-      let severity = 'INFO'; // Default
-      const errorTag = span.tags.find((tag: any) => tag.key === 'error' && tag.value);
-      const statusCodeTag = span.tags.find((tag: any) =>
-        (tag.key === 'http.status_code' && Number(tag.value) >= 400) ||
-        (tag.key === 'rpc.grpc.status_code' && Number(tag.value) > 0)
-      );
-
-      if (errorTag) {
-        severity = 'ERROR';
-      } else if (statusCodeTag) {
-        // HTTP 4xx is WARNING, 5xx is ERROR
-        const statusCode = Number(statusCodeTag.value);
-        if (statusCodeTag.key === 'http.status_code') {
-          if (statusCode >= 500) {
-            severity = 'ERROR';
-          } else if (statusCode >= 400) {
-            severity = 'WARNING';
-          }
-        } else if (statusCode > 0) { // gRPC non-zero status is an error
-          severity = 'ERROR';
-        }
-      }
-
-      // Extract a message from logs if available
-      let message = span.operationName;
-      if (span.logs && span.logs.length > 0) {
-        const eventField = span.logs[0].fields.find((field: any) => field.key === 'event');
-        if (eventField) {
-          message = `${span.operationName} - ${eventField.value}`;
-        }
-      }
-
-      // Create unified timestamp from microseconds to ISO string
-      const timestamp = new Date(span.startTime / 1000).toISOString();
-
-      // Create the LogEntry
-      const logEntry: LogEntry = {
-        jaegerSpan: span,
-        serviceName,
-        parentSpanID,
-        message,
-        target: serviceName,
-        severity,
-        timestamp,
-        rawText: JSON.stringify(span),
-        jsonPayload: {
-          fields: {
-            message
-          },
-          target: serviceName
-        }
-      };
-
-      logs.push(logEntry);
-    }
-  }
-
-  if (logs.length === 0) {
-    vscode.window.showInformationMessage('No spans found in the Jaeger trace file.');
-  }
-
-  return logs;
-}
 
 /**
  * Process traditional log format into LogEntry objects
@@ -670,26 +548,8 @@ export async function findCodeLocation(log: LogEntry, repoPath: string): Promise
       
       // If message is empty or too generic, try format-specific fields
       if (!searchContent || searchContent.trim().length < 3) {
-        // Try Jaeger format
-        if (log.jaegerSpan) {
-          searchContent = log.jaegerSpan.operationName || searchContent;
-          
-          // Try to extract more context from span tags
-          const httpMethod = log.jaegerSpan.tags.find(tag => tag.key === 'http.method');
-          const httpPath = log.jaegerSpan.tags.find(tag => tag.key === 'http.target' || tag.key === 'http.url');
-          
-          if (httpMethod && httpPath) {
-            searchContent = `${httpMethod.value} ${httpPath.value}`;
-          }
-          
-          // Check for RPC method
-          const rpcMethod = log.jaegerSpan.tags.find(tag => tag.key === 'rpc.method');
-          if (rpcMethod) {
-            searchContent = rpcMethod.value.toString();
-          }
-        }
         // Try Axiom format
-        else if (log.axiomSpan) {
+        if (log.axiomSpan) {
           if (log.axiomSpan.name) searchContent = log.axiomSpan.name;
         }
         // Try jsonPayload as last resort
@@ -718,19 +578,7 @@ export async function findCodeLocation(log: LogEntry, repoPath: string): Promise
       
       // If no target found, try format-specific fields
       if (!targetPath) {
-        if (log.jaegerSpan) {
-          // Check for source code related tags
-          const sourceFileTag = log.jaegerSpan.tags.find(tag =>
-            tag.key === 'code.filepath' ||
-            tag.key === 'code.function' ||
-            tag.key === 'code.namespace'
-          );
-          
-          if (sourceFileTag) {
-            targetPath = sourceFileTag.value.toString();
-          }
-        }
-        else if (log.axiomSpan) {
+        if (log.axiomSpan) {
           // Check for source code attributes
           targetPath = log.axiomSpan['attributes.code.filepath'] ||
                        log.axiomSpan['code.filepath'] ||
