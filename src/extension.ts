@@ -5,7 +5,6 @@ import { VariableDecorator } from "./variableDecorator";
 import { registerCallStackExplorer } from "./callStackExplorer";
 import { ExtensibleLogParser, LogParser } from "./processor";
 import { SettingsView } from "./settingsView";
-import { LogDetailViewProvider } from './logDetailViewProvider';
 import { LogEntry } from "./logExplorer";
 
 // Global registry for log parsers
@@ -15,18 +14,6 @@ export function activate(context: vscode.ExtensionContext) {
   console.log("TraceBack is now active");
   
   const updateStatusBars = () => {};
-
-  // Create and register the Log Detail View provider FIRST
-  const logDetailViewProvider = new LogDetailViewProvider(context.extensionUri);
-  
-  // Register the webview provider
-  const logDetailViewRegistration = vscode.window.registerWebviewViewProvider(
-    'logDetailView',
-    logDetailViewProvider,
-    {
-      webviewOptions: { retainContextWhenHidden: true }
-    }
-  );
 
   // Create other providers
   const logExplorerProvider = new LogExplorerProvider(context);
@@ -44,7 +31,6 @@ export function activate(context: vscode.ExtensionContext) {
   variableExplorerProvider.setVariableDecorator(variableDecorator);
   logExplorerProvider.setVariableExplorer(variableExplorerProvider);
   logExplorerProvider.setCallStackExplorer(callStackExplorerProvider);
-  logExplorerProvider.setLogDetailViewProvider(logDetailViewProvider);
 
   // Create the tree view
   const treeView = vscode.window.createTreeView("logExplorer", {
@@ -55,7 +41,6 @@ export function activate(context: vscode.ExtensionContext) {
   // Register commands
   const refreshCommand = vscode.commands.registerCommand("traceback.refreshLogs", () => {
     logExplorerProvider.refresh();
-    logDetailViewProvider.updateLogDetails(undefined);
   });
 
   const showLogsCommand = vscode.commands.registerCommand("traceback.showLogs", () => {
@@ -346,7 +331,6 @@ export function activate(context: vscode.ExtensionContext) {
   );
 
   context.subscriptions.push(
-    logDetailViewRegistration,
     logExplorerTreeView,
     openSettingsCommand,
     refreshCommand,

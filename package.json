@@ -126,13 +126,6 @@
           "contextualTitle": "Logs Explorer"
         },
         {
-          "type": "webview",
-          "id": "logDetailView",
-          "name": "Log Details",
-          "icon": "$(inspect)",
-          "contextualTitle": "Log Details"
-        },
-        {
           "id": "logVariablesExplorer",
           "name": "Variables",
           "icon": "$(symbol-variable)",
