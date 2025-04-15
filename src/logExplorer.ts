@@ -842,21 +842,6 @@ export class SpanGroupItem extends vscode.TreeItem {
 
     this.description = `(${startTime.format('HH:mm:ss.SSS')} - ${endTime.format('HH:mm:ss.SSS')}, ${durationStr}) [${severityInfo}]`;
 
-    // Enhanced tooltip with all details
-    this.tooltip = [
-      `Group: ${spanName}`,
-      '',
-      'Time Range:',
-      `  Start: ${startTime.format('YYYY-MM-DD HH:mm:ss.SSS')}`,
-      `  End: ${endTime.format('YYYY-MM-DD HH:mm:ss.SSS')}`,
-      `  Duration: ${durationStr}`,
-      '',
-      `Total logs: ${logs.length}`,
-      'Log levels:',
-      ...Object.entries(severityCounts).map(([level, count]) =>
-        `  ${level}: ${count}`
-      )
-    ].join('\n');
 
     // Determine icon color based on severities present in logs
     if (severityCounts['ERROR'] && severityCounts['ERROR'] > 0) {
@@ -980,8 +965,6 @@ export class LogTreeItem extends vscode.TreeItem {
     // Set the icon based on severity
     this.iconPath = this.getIcon(log.severity);
 
-    // Use simpler tooltip format
-    this.tooltip = new vscode.MarkdownString(`**Timestamp:** ${log.timestamp}\n\n**Severity:** ${log.severity}\n\n**Target:** ${log.target || 'N/A'}\n\n\`\`\`\n${log.rawText}\n\`\`\``);
 
     this.command = {
       command: 'traceback.openLog',
