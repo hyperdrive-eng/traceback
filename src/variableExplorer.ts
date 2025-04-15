@@ -533,7 +533,14 @@ export function registerVariableExplorer(context: vscode.ExtensionContext): Vari
       // For small values, show in an input box
       if (stringValue.length < 1000) {
         const inputBox = vscode.window.createInputBox();
-        inputBox.title = `Inspect: ${variableName}`;
+        
+        // Create a truncated title (limit to 30 chars)
+        const maxTitleLength = 30;
+        const truncatedName = variableName.length > maxTitleLength 
+          ? variableName.substring(0, maxTitleLength) + '...'
+          : variableName;
+          
+        inputBox.title = `Inspect: ${truncatedName}`;
         inputBox.value = stringValue;
         inputBox.password = false;
         inputBox.ignoreFocusOut = true;
@@ -547,9 +554,16 @@ export function registerVariableExplorer(context: vscode.ExtensionContext): Vari
       } else {
         // For larger values, create a temporary webview panel
         // that can be closed with Escape and allows scrolling
+        
+        // Create a truncated title (limit to 30 chars)
+        const maxTitleLength = 30;
+        const truncatedName = variableName.length > maxTitleLength 
+          ? variableName.substring(0, maxTitleLength) + '...'
+          : variableName;
+          
         const panel = vscode.window.createWebviewPanel(
           'variableInspect',
-          `Inspect: ${variableName}`,
+          `Inspect: ${truncatedName}`,
           vscode.ViewColumn.Active,
           {
             enableScripts: false,
