@@ -574,7 +574,13 @@ export class LogExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
           targetLine
         );
         
-        if (potentialCallers && potentialCallers.length > 0 && staticSearchString) {
+        if (!potentialCallers || potentialCallers.length === 0) {
+          // If no potential callers found, update the call stack explorer with empty state
+          this.callStackExplorerProvider.setLogEntry(log, false);
+          return;
+        }
+
+        if (staticSearchString) {
           await this.callStackExplorerProvider.analyzeCallers(
             logMessage,
             staticSearchString,
@@ -583,17 +589,26 @@ export class LogExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
           );
 
           // Cache the results after analysis
-          if (this.callStackExplorerProvider.getCallStackAnalysis()) {
+          const analysis = this.callStackExplorerProvider.getCallStackAnalysis();
+          if (analysis && analysis.rankedCallers.length > 0) {
             log.callStackCache = {
-              potentialCallers: this.callStackExplorerProvider.getCallStackAnalysis()!.rankedCallers,
+              potentialCallers: analysis.rankedCallers,
               lastUpdated: new Date().toISOString()
             };
+          } else {
+            // If no ranked callers found after analysis, update with empty state
+            this.callStackExplorerProvider.setLogEntry(log, false);
           }
+        } else {
+          // If no static search string available, update with empty state
+          this.callStackExplorerProvider.setLogEntry(log, false);
         }
       });
     } catch (error) {
       // Log error but don't show to user since this is background processing
       console.error('Error in background call stack analysis:', error);
+      // Update call stack explorer to show no results found
+      this.callStackExplorerProvider?.setLogEntry(log, false);
     }
   }
   

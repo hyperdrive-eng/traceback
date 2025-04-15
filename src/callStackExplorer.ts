@@ -482,6 +482,16 @@ export class CallStackExplorerProvider implements vscode.TreeDataProvider<CallSt
 
     if (!element) {
       // Root level - show initial callers
+      if (this.callerAnalysis.length === 0) {
+        return [new CallStackTreeItem({
+          filePath: '',
+          lineNumber: 0,
+          code: 'No call stack found',
+          functionName: '',
+          confidence: 0,
+          explanation: 'Could not determine the call stack for this log entry'
+        }, this)];
+      }
       return this.callerAnalysis.map(caller => new CallStackTreeItem(caller, this, true));
     }
 
