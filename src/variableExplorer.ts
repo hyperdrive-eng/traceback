@@ -608,7 +608,6 @@ export function registerVariableExplorer(context: vscode.ExtensionContext): Vari
           <body>
             <h3>${escapeHtml(variableName)}</h3>
             <div class="value">${escapeHtml(stringValue)}</div>
-            <div class="escape-hint">Press 'Escape' to close this view</div>
           </body>
           </html>
         `;
