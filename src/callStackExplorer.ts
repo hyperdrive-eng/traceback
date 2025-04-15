@@ -5,6 +5,53 @@ import { ClaudeService } from './claudeService';
 import * as path from 'path';
 import { logLineDecorationType } from './decorations';
 
+interface LanguageSupport {
+  extensionId: string;
+  displayName: string;
+  symbolProvider?: boolean;  // Whether to use VSCode's symbol provider
+  referenceProvider?: boolean;  // Whether to use VSCode's reference provider
+}
+
+// Map of supported languages and their required extensions
+const SUPPORTED_LANGUAGES: Record<string, LanguageSupport> = {
+  'go': {
+    extensionId: 'golang.go',
+    displayName: 'Go',
+    symbolProvider: true,
+    referenceProvider: true
+  },
+  'rust': {
+    extensionId: 'rust-lang.rust-analyzer',
+    displayName: 'Rust',
+    symbolProvider: true,
+    referenceProvider: true
+  },
+  'typescript': {
+    extensionId: 'vscode.typescript-language-features',
+    displayName: 'TypeScript',
+    symbolProvider: true,
+    referenceProvider: true
+  },
+  'javascript': {
+    extensionId: 'vscode.typescript-language-features',
+    displayName: 'JavaScript',
+    symbolProvider: true,
+    referenceProvider: true
+  },
+  'python': {
+    extensionId: 'ms-python.python',
+    displayName: 'Python',
+    symbolProvider: true,
+    referenceProvider: true
+  },
+  'java': {
+    extensionId: 'redhat.java',
+    displayName: 'Java',
+    symbolProvider: true,
+    referenceProvider: true
+  }
+};
+
 interface CallerNode {
   filePath: string;
   lineNumber: number;
@@ -138,34 +185,43 @@ export class CallStackExplorerProvider implements vscode.TreeDataProvider<CallSt
     try {
         // First, get the document
         const document = await vscode.workspace.openTextDocument(sourceFile);
-        console.log('Document language ID:', document.languageId);
+        const languageId = document.languageId;
+        console.log('Document language ID:', languageId);
 
-        // For Go files, ensure Go extension is installed and language server is ready
-        if (document.languageId === 'go') {
-            const goExtension = vscode.extensions.getExtension('golang.go');
-            if (!goExtension) {
-                console.log('Go extension not found');
-                vscode.window.showWarningMessage('Go extension is not installed. Some features may not work properly.');
-            } else if (!goExtension.isActive) {
-                console.log('Activating Go extension...');
-                await goExtension.activate();
-            }
+        // Check if language is supported
+        const languageSupport = SUPPORTED_LANGUAGES[languageId];
+        if (!languageSupport) {
+            console.log('Language not supported:', languageId);
+            vscode.window.showWarningMessage(`Call stack analysis is not supported for ${languageId} files yet.`);
+            return potentialCallers;
+        }
 
-            // Wait for Go language server to be ready
+        // Check and activate required extension
+        const extension = vscode.extensions.getExtension(languageSupport.extensionId);
+        if (!extension) {
+            console.log(`${languageSupport.displayName} extension not found`);
+            vscode.window.showWarningMessage(
+                `${languageSupport.displayName} extension (${languageSupport.extensionId}) is not installed. ` +
+                `Please install it for better call stack analysis.`
+            );
+        } else if (!extension.isActive) {
+            console.log(`Activating ${languageSupport.displayName} extension...`);
+            await extension.activate();
+            // Wait for language server to be ready
             await new Promise(resolve => setTimeout(resolve, 500));
         }
 
-        // For Go files, try using the Go-specific symbol provider first
+        // Try using language server's symbol provider if available
         let symbols: vscode.DocumentSymbol[] | undefined;
         
-        if (document.languageId === 'go') {
+        if (languageSupport.symbolProvider) {
             try {
-                // Use standard Go symbol provider instead of test-specific commands
+                // Use standard symbol provider
                 symbols = await vscode.commands.executeCommand<vscode.DocumentSymbol[]>(
                     'vscode.executeDocumentSymbolProvider',
                     document.uri
                 );
-                console.log('Go symbols:', symbols);
+                console.log(`${languageSupport.displayName} symbols:`, symbols);
                 
                 if (!symbols || symbols.length === 0) {
                     // Try workspace symbols as fallback
@@ -173,7 +229,7 @@ export class CallStackExplorerProvider implements vscode.TreeDataProvider<CallSt
                         'vscode.executeWorkspaceSymbolProvider',
                         path.basename(document.uri.fsPath)
                     );
-                    console.log('Go workspace symbols:', workspaceSymbols);
+                    console.log(`${languageSupport.displayName} workspace symbols:`, workspaceSymbols);
                     
                     if (workspaceSymbols) {
                         symbols = workspaceSymbols.map(s => ({
@@ -187,11 +243,11 @@ export class CallStackExplorerProvider implements vscode.TreeDataProvider<CallSt
                     }
                 }
             } catch (error) {
-                console.log('Error getting Go symbols:', error);
+                console.log(`Error getting ${languageSupport.displayName} symbols:`, error);
             }
         }
 
-        // If no Go-specific symbols found, try generic symbol provider
+        // If no symbols found, try generic symbol provider
         if (!symbols || symbols.length === 0) {
             symbols = await vscode.commands.executeCommand<vscode.DocumentSymbol[]>(
                 'vscode.executeDocumentSymbolProvider',
@@ -223,77 +279,9 @@ export class CallStackExplorerProvider implements vscode.TreeDataProvider<CallSt
             }
         }
 
-        // If still no symbols, try parsing the file content
-        if (!symbols || symbols.length === 0) {
-            console.log('No symbols found, attempting manual parse');
-            const text = document.getText();
-            const lines = text.split('\n');
-
-            // Enhanced Go function detection
-            const functionMatches: Array<{ name: string; startLine: number; endLine: number }> = [];
-            let bracketCount = 0;
-            let currentFunction: { name: string; startLine: number; endLine: number } | undefined;
-
-            const goFuncPattern = /^func\s+(\w+|\(\w+\s+\*?\w+\)\s+\w+)\s*\(/;
-            const goMethodPattern = /^func\s+\(\w+\s+\*?\w+\)\s+(\w+)\s*\(/;
-
-            for (let i = 0; i < lines.length; i++) {
-                const line = lines[i].trim();
-                
-                // Count brackets to track function boundaries
-                bracketCount += (line.match(/{/g) || []).length;
-                bracketCount -= (line.match(/}/g) || []).length;
-
-                const funcMatch = line.match(goFuncPattern);
-                if (funcMatch) {
-                    let funcName = funcMatch[1];
-                    // If it's a method, extract just the method name
-                    const methodMatch = line.match(goMethodPattern);
-                    if (methodMatch) {
-                        funcName = methodMatch[1];
-                    }
-
-                    currentFunction = {
-                        name: funcName,
-                        startLine: i,
-                        endLine: -1
-                    };
-                    functionMatches.push(currentFunction);
-                }
-
-                // When brackets balance and we have a current function, close it
-                if (bracketCount === 0 && currentFunction && currentFunction.endLine === -1) {
-                    currentFunction.endLine = i;
-                }
-            }
-
-            // Find the function containing our line
-            const containingFunction = functionMatches.find(f => 
-                f.startLine <= lineNumber && 
-                (f.endLine === -1 || f.endLine >= lineNumber)
-            );
-
-            if (containingFunction) {
-                symbols = [{
-                    name: containingFunction.name,
-                    detail: '',
-                    kind: vscode.SymbolKind.Function,
-                    range: new vscode.Range(
-                        containingFunction.startLine, 0,
-                        containingFunction.endLine === -1 ? lines.length - 1 : containingFunction.endLine, 0
-                    ),
-                    selectionRange: new vscode.Range(
-                        containingFunction.startLine, 0,
-                        containingFunction.startLine, lines[containingFunction.startLine].length
-                    ),
-                    children: []
-                }];
-            }
-        }
-
+        // If still no symbols found, return current line context
         if (!symbols || symbols.length === 0) {
             console.log('No symbols found for file:', sourceFile);
-            // If we still can't find symbols, at least return the current line context
             potentialCallers.push({
                 filePath: sourceFile,
                 lineNumber: lineNumber,
@@ -316,7 +304,8 @@ export class CallStackExplorerProvider implements vscode.TreeDataProvider<CallSt
                     }
                     // If no child contains the line, but this symbol does, return this symbol
                     if (symbol.kind === vscode.SymbolKind.Function ||
-                        symbol.kind === vscode.SymbolKind.Method) {
+                        symbol.kind === vscode.SymbolKind.Method ||
+                        symbol.kind === vscode.SymbolKind.Constructor) {
                         return symbol;
                     }
                 }
@@ -335,48 +324,50 @@ export class CallStackExplorerProvider implements vscode.TreeDataProvider<CallSt
         // Get the selection range for the function name
         const selectionRange = enclosingSymbol.selectionRange;
 
-        // Find references to this function/method
-        const locations = await vscode.commands.executeCommand<vscode.Location[]>(
-            'vscode.executeReferenceProvider',
-            document.uri,
-            selectionRange.start
-        );
+        // Find references to this function/method if the language supports it
+        if (languageSupport.referenceProvider) {
+            const locations = await vscode.commands.executeCommand<vscode.Location[]>(
+                'vscode.executeReferenceProvider',
+                document.uri,
+                selectionRange.start
+            );
 
-        if (locations) {
-            for (const location of locations) {
-                // Skip self-references (the function definition itself)
-                if (location.uri.fsPath === sourceFile &&
-                    location.range.start.line === selectionRange.start.line) {
-                    continue;
+            if (locations) {
+                for (const location of locations) {
+                    // Skip self-references (the function definition itself)
+                    if (location.uri.fsPath === sourceFile &&
+                        location.range.start.line === selectionRange.start.line) {
+                        continue;
+                    }
+
+                    const callerDoc = await vscode.workspace.openTextDocument(location.uri);
+
+                    // Get the enclosing function of the reference
+                    const callerSymbols = await vscode.commands.executeCommand<vscode.DocumentSymbol[]>(
+                        'vscode.executeDocumentSymbolProvider',
+                        location.uri
+                    );
+
+                    const callerEnclosingSymbol = callerSymbols ?
+                        findEnclosingSymbol(callerSymbols, location.range.start.line) :
+                        undefined;
+
+                    // Get some context around the calling line
+                    const startLine = Math.max(0, location.range.start.line - 1);
+                    const endLine = Math.min(callerDoc.lineCount - 1, location.range.start.line + 1);
+                    const contextLines = [];
+                    for (let i = startLine; i <= endLine; i++) {
+                        contextLines.push(callerDoc.lineAt(i).text.trim());
+                    }
+
+                    potentialCallers.push({
+                        filePath: location.uri.fsPath,
+                        lineNumber: location.range.start.line,
+                        code: contextLines.join('\n'),
+                        functionName: callerEnclosingSymbol?.name || 'unknown',
+                        functionRange: callerEnclosingSymbol?.range
+                    });
                 }
-
-                const callerDoc = await vscode.workspace.openTextDocument(location.uri);
-
-                // Get the enclosing function of the reference
-                const callerSymbols = await vscode.commands.executeCommand<vscode.DocumentSymbol[]>(
-                    'vscode.executeDocumentSymbolProvider',
-                    location.uri
-                );
-
-                const callerEnclosingSymbol = callerSymbols ?
-                    findEnclosingSymbol(callerSymbols, location.range.start.line) :
-                    undefined;
-
-                // Get some context around the calling line
-                const startLine = Math.max(0, location.range.start.line - 1);
-                const endLine = Math.min(callerDoc.lineCount - 1, location.range.start.line + 1);
-                const contextLines = [];
-                for (let i = startLine; i <= endLine; i++) {
-                    contextLines.push(callerDoc.lineAt(i).text.trim());
-                }
-
-                potentialCallers.push({
-                    filePath: location.uri.fsPath,
-                    lineNumber: location.range.start.line,
-                    code: contextLines.join('\n'),
-                    functionName: callerEnclosingSymbol?.name || 'unknown',
-                    functionRange: callerEnclosingSymbol?.range
-                });
             }
         }
 

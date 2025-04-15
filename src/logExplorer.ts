@@ -210,7 +210,7 @@ export class LogExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
 
         allLogs.forEach((log) => {
           // Handle logs without any group information
-          if (!log.jsonPayload?.target && !log.jsonPayload?.span && !log.jaegerSpan && !log.axiomSpan) {
+          if (!log.jsonPayload?.target && !log.jsonPayload?.span && !log.axiomSpan) {
             // Add ungrouped logs directly as individual items
             result.push(new LogTreeItem(log));
             return;

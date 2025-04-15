@@ -97,10 +97,6 @@ export class ClaudeService {
             input_schema: {
                 type: "object",
                 properties: {
-                    logMessage: {
-                        type: "string",
-                        description: "The log message to analyze"
-                    },
                     staticSearchString: {
                         type: "string",
                         description: "The static prefix or template part of the log message that would be in the source code"
@@ -111,7 +107,7 @@ export class ClaudeService {
                         additionalProperties: true
                     }
                 },
-                required: ["logMessage", "staticSearchString", "variables"]
+                required: ["staticSearchString", "variables"]
             }
         }];
 
@@ -125,18 +121,30 @@ export class ClaudeService {
 Log message: "${logMessage}"
 
 Rules for static search string:
-- Look for the constant text prefix that would be in a print/log statement
-- Exclude all variable values, data structures, timestamps, IDs, and other dynamic content
-- For structured data like JSON or arrays, only keep the static message prefix before the data
-- Think about how a developer would write the log statement in code
+- Only include text that is guaranteed to be constant in the source code
+- Do NOT include any key-value pair formatting or variable values
+- When in doubt, be conservative and include less rather than more
+- You MUST return a non-empty static string, even if it's just the brackets
 
 Rules for variables:
-- Include all dynamic values found in the log
-- Use meaningful key names
-- Preserve the original data types`
+- Extract all key-value pairs and dynamic values
+- Preserve variable names as they appear in the log
+- Keep the original data types where clear
+
+Example:
+Input: "[PlaceOrder] user_id=\"3790d414-165b-11f0-8ee4-96dac6adf53a\" user_currency=\"USD\""
+Static: "[PlaceOrder]"
+Variables: {
+  "user_id": "3790d414-165b-11f0-8ee4-96dac6adf53a",
+  "user_currency": "USD"
+}
+
+Remember: Both staticSearchString and variables fields are required in your response.
+If you can't find any static text, return an empty string.
+If you can't find any variables, return an empty object.`
             }],
-            model: this.analysisModel, // Use faster model
-            max_tokens: 500,           // Reduce token limit since we need less
+            model: this.analysisModel,
+            max_tokens: 500,
             tools: tools,
             tool_choice: {
                 type: "tool",
@@ -166,10 +174,40 @@ Rules for variables:
                 throw new Error(`Claude API error: ${response.statusText}\nDetails: ${JSON.stringify(responseData)}`);
             }
 
-            if (!responseData.content || !responseData.content[0] || !responseData.content[0].type || !(responseData.content[0].type === 'tool_use')) {
-                throw new Error('Invalid response format from Claude API');
+            // Validate response structure
+            if (!responseData.content ||
+                !Array.isArray(responseData.content) ||
+                responseData.content.length === 0 ||
+                responseData.content[0].type !== 'tool_use' ||
+                !responseData.content[0].input) {
+                throw new Error('Invalid response format from Claude API: Missing required structure');
             }
-            return (responseData.content[0].input) as LLMLogAnalysis;
+
+            const toolOutput = responseData.content[0].input;
+
+            // Validate required fields are present
+            if (!Object.prototype.hasOwnProperty.call(toolOutput, 'staticSearchString')) {
+                console.warn('Claude response missing staticSearchString, using empty string');
+                toolOutput.staticSearchString = '';
+            }
+
+            if (!Object.prototype.hasOwnProperty.call(toolOutput, 'variables')) {
+                console.warn('Claude response missing variables, using empty object');
+                toolOutput.variables = {};
+            }
+
+            // Ensure types are correct
+            if (typeof toolOutput.staticSearchString !== 'string') {
+                console.warn('Claude response staticSearchString is not a string, converting');
+                toolOutput.staticSearchString = String(toolOutput.staticSearchString || '');
+            }
+
+            if (typeof toolOutput.variables !== 'object' || toolOutput.variables === null) {
+                console.warn('Claude response variables is not an object, using empty object');
+                toolOutput.variables = {};
+            }
+
+            return toolOutput as LLMLogAnalysis;
         } catch (error) {
             console.error('Error calling Claude API:', error);
             throw error;
