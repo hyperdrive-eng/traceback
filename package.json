@@ -18,7 +18,7 @@
   "activationEvents": [
     "onView:logExplorer",
     "onView:logVariableExplorer",
-    "onView:callStackExplorer", 
+    "onView:callStackExplorer",
     "onCommand:traceback.showLogs",
     "onCommand:traceback.refreshLogs",
     "onCommand:traceback.createSampleLogs",
@@ -120,18 +120,20 @@
         {
           "id": "logExplorer",
           "name": "Logs",
-          "icon": "media/dep.svg",
-          "contextualTitle": "Logs"
+          "icon": "$(list-unordered)",
+          "contextualTitle": "Logs Explorer"
         },
         {
           "id": "logVariableExplorer",
           "name": "Variables",
-          "contextualTitle": "Variables"
+          "icon": "$(symbol-variable)",
+          "contextualTitle": "Variable Explorer"
         },
         {
           "id": "callStackExplorer",
           "name": "Call Stack",
-          "contextualTitle": "Call Stack"
+          "icon": "$(callstack-view-icon)",
+          "contextualTitle": "Call Stack Explorer"
         }
       ]
     },

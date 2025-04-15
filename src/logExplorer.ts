@@ -165,6 +165,7 @@ export class LogExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
 
   constructor(context: vscode.ExtensionContext) {
     this.context = context;
+
     vscode.commands.registerCommand('traceback.openLog', (log: LogEntry) => this.openLog(log));
     vscode.commands.registerCommand('traceback.toggleSort', () => this.toggleSort());
 
@@ -218,10 +219,23 @@ export class LogExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
     this.callStackExplorerProvider = provider;
   }
 
-
   refresh(): void {
+    // Clear decorations from editor
+    clearDecorations();
+
+    // Clear variable and call stack explorers
+    if (this.variableExplorerProvider) {
+      this.variableExplorerProvider.setLog(undefined);
+    }
+    if (this.callStackExplorerProvider) {
+      this.callStackExplorerProvider.setLogEntry(undefined);
+    }
+
     this.loadLogs();
     this._onDidChangeTreeData.fire();
+
+    // Clear selection in the logs view
+    vscode.commands.executeCommand('list.clear');
   }
 
   getTreeItem(element: vscode.TreeItem): vscode.TreeItem {
@@ -240,7 +254,7 @@ export class LogExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
         const ungroupedLogs = allLogs.filter(log => !log.jsonPayload && !log.jaegerSpan && !log.axiomSpan);
         if (ungroupedLogs.length > 0) {
           return Promise.resolve(
-            ungroupedLogs.map(log => new LogTreeItem(log, false))
+            ungroupedLogs.map(log => new LogTreeItem(log))
           );
         }
 
@@ -306,7 +320,7 @@ export class LogExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
         if (ungroupedLogs.length > 0) {
           result.push(...ungroupedLogs
             .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
-            .map(log => new LogTreeItem(log, false))
+            .map(log => new LogTreeItem(log))
           );
         }
 
@@ -314,10 +328,7 @@ export class LogExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
       }
     } else if (element instanceof SpanGroupItem) {
       return Promise.resolve(
-        element.logs.map(log => new LogTreeItem(
-          log,
-          false
-        ))
+        element.logs.map(log => new LogTreeItem(log))
       );
     }
     return Promise.resolve([]);
@@ -362,10 +373,22 @@ export class LogExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
         return;
       }
 
-      // Reset first log time before loading new logs
+      // Reset first log time and ID counter before loading new logs
       LogTreeItem.resetFirstLogTime();
+      
+      // Clear existing logs and span map
+      this.logs = [];
+      this.spanMap.clear();
 
+      // Load new logs
       this.logs = await loadLogs(logPath);
+
+      // Clear all caches from loaded logs
+      this.logs.forEach(log => {
+        log.codeLocationCache = undefined;
+        log.callStackCache = undefined;
+        log.claudeAnalysis = undefined;
+      });
 
       // Group logs by span name
       this.spanMap.clear();
@@ -415,14 +438,17 @@ export class LogExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
     } catch (error) {
       console.error('Error loading logs:', error);
       this.logs = [];
+      this.spanMap.clear();
     }
   }
 
   private async openLog(log: LogEntry): Promise<void> {
+    console.log('openLog called with:', log);
+    
+    // Clear previous decorations
+    clearDecorations();
+
     try {
-      // Clear any existing decorations
-      clearDecorations();
-      
       // Show progress indicator for initial analysis
       await vscode.window.withProgress({
         location: vscode.ProgressLocation.Notification,
@@ -548,7 +574,13 @@ export class LogExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
           targetLine
         );
         
-        if (potentialCallers && potentialCallers.length > 0 && staticSearchString) {
+        if (!potentialCallers || potentialCallers.length === 0) {
+          // If no potential callers found, update the call stack explorer with empty state
+          this.callStackExplorerProvider.setLogEntry(log, false);
+          return;
+        }
+
+        if (staticSearchString) {
           await this.callStackExplorerProvider.analyzeCallers(
             logMessage,
             staticSearchString,
@@ -557,17 +589,26 @@ export class LogExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
           );
 
           // Cache the results after analysis
-          if (this.callStackExplorerProvider.getCallStackAnalysis()) {
+          const analysis = this.callStackExplorerProvider.getCallStackAnalysis();
+          if (analysis && analysis.rankedCallers.length > 0) {
             log.callStackCache = {
-              potentialCallers: this.callStackExplorerProvider.getCallStackAnalysis()!.rankedCallers,
+              potentialCallers: analysis.rankedCallers,
               lastUpdated: new Date().toISOString()
             };
+          } else {
+            // If no ranked callers found after analysis, update with empty state
+            this.callStackExplorerProvider.setLogEntry(log, false);
           }
+        } else {
+          // If no static search string available, update with empty state
+          this.callStackExplorerProvider.setLogEntry(log, false);
         }
       });
     } catch (error) {
       // Log error but don't show to user since this is background processing
       console.error('Error in background call stack analysis:', error);
+      // Update call stack explorer to show no results found
+      this.callStackExplorerProvider?.setLogEntry(log, false);
     }
   }
   
@@ -702,7 +743,7 @@ export class LogExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
     }
   }
 
-  private toggleSort(): void {
+  public toggleSort(): void {
     this.sortByTime = !this.sortByTime;
     vscode.commands.executeCommand('setContext', 'traceback.timeSort', this.sortByTime);
     vscode.window.showInformationMessage(
@@ -835,8 +876,9 @@ export class SpanGroupItem extends vscode.TreeItem {
 export class LogTreeItem extends vscode.TreeItem {
   private static readonly MAX_MESSAGE_LENGTH = 100;
   private static firstLogTime: number | null = null;
+  private static idCounter = 0;  // Keep the counter for unique IDs
 
-  constructor(protected log: LogEntry, private isPinned: boolean = false) {
+  constructor(public readonly log: LogEntry) {
     let fullMessage: string;
 
     // Handle Jaeger trace format
@@ -900,26 +942,26 @@ export class LogTreeItem extends vscode.TreeItem {
       const chain = log.jsonPayload.fields.chain ? `[${log.jsonPayload.fields.chain}] ` : '';
       fullMessage = `${chain}${message}`;
     }
-      // Fallback to unified message field or rawText
+    // Fallback to unified message field or rawText
     else {
       fullMessage = log.message || log.rawText || 'No message';
     }
 
     const truncatedMessage = LogTreeItem.truncateMessage(fullMessage);
-
-    // Add pin icon to the label if pinned
     super(truncatedMessage, vscode.TreeItemCollapsibleState.None);
+
+    // Generate a unique ID by combining available identifiers with a counter
+    this.id = log.insertId || log.jaegerSpan?.spanID || `${log.timestamp}_${LogTreeItem.idCounter++}`;
 
     // Initialize first log time if not set
     if (LogTreeItem.firstLogTime === null) {
       LogTreeItem.firstLogTime = new Date(log.timestamp).getTime();
     }
 
-    // Calculate relative time
+    // Calculate and format relative time
     const currentLogTime = new Date(log.timestamp).getTime();
     const timeDiff = currentLogTime - LogTreeItem.firstLogTime;
 
-    // Format relative time
     let relativeTime;
     if (timeDiff === 0) {
       relativeTime = '+0ms';
@@ -938,59 +980,40 @@ export class LogTreeItem extends vscode.TreeItem {
     // Set the icon based on severity
     this.iconPath = this.getIcon(log.severity);
 
-    // Create tooltip with details
-    let location: string;
-    if (log.jaegerSpan) {
-      location = log.serviceName || 'Unknown service';
-    } else {
-      location = log.jsonPayload?.target || log.target || 'Unknown';
-    }
-
-    const tooltipDetails = [
-      `Time: ${new Date(log.timestamp).toLocaleString()}`,
-      `Level: ${log.severity}`,
-      `Location: ${location}`
-    ];
-
-    const tooltip = new vscode.MarkdownString(tooltipDetails.join('\n\n'));
-    tooltip.isTrusted = true;
-    this.tooltip = tooltip;
+    // Use simpler tooltip format
+    this.tooltip = new vscode.MarkdownString(`**Timestamp:** ${log.timestamp}\n\n**Severity:** ${log.severity}\n\n**Target:** ${log.target || 'N/A'}\n\n\`\`\`\n${log.rawText}\n\`\`\``);
 
     this.command = {
       command: 'traceback.openLog',
       title: 'Open Log',
-      arguments: [log],
+      arguments: [log]
     };
+
+    this.contextValue = 'logEntry';
   }
 
-  // Reset first log time when logs are reloaded
+  // Reset both firstLogTime and idCounter when logs are reloaded
   public static resetFirstLogTime(): void {
     LogTreeItem.firstLogTime = null;
+    LogTreeItem.idCounter = 0;  // Reset the counter
   }
 
   private getIcon(level: string): vscode.ThemeIcon {
-    switch (level) {
-      case 'INFO':
-        return new vscode.ThemeIcon('info', new vscode.ThemeColor('charts.blue'));
+    switch (level.toUpperCase()) {
+      case 'ERROR':
+      case 'CRITICAL':
+      case 'FATAL':
+        return new vscode.ThemeIcon('error', new vscode.ThemeColor('charts.red'));
       case 'WARNING':
         return new vscode.ThemeIcon('warning', new vscode.ThemeColor('charts.yellow'));
-      case 'ERROR':
-        return new vscode.ThemeIcon('error', new vscode.ThemeColor('charts.red'));
+      case 'INFO':
+        return new vscode.ThemeIcon('info', new vscode.ThemeColor('charts.blue'));
       case 'DEBUG':
+      case 'TRACE':
         return new vscode.ThemeIcon('debug', new vscode.ThemeColor('charts.green'));
       default:
-        return new vscode.ThemeIcon('symbol-text', new vscode.ThemeColor('terminal.ansiWhite'));
+        return new vscode.ThemeIcon('circle-filled');
     }
-  }
-
-  // Getter for the log entry
-  public getLogEntry(): LogEntry {
-    return this.log;
-  }
-
-  // Getter for pin status
-  public isPinnedLog(): boolean {
-    return this.isPinned;
   }
 
   private static truncateMessage(message: string): string {

@@ -5,6 +5,7 @@ import { VariableDecorator } from "./variableDecorator";
 import { registerCallStackExplorer } from "./callStackExplorer";
 import { ExtensibleLogParser, LogParser } from "./processor";
 import { SettingsView } from "./settingsView";
+import { LogEntry } from "./logExplorer";
 
 // Global registry for log parsers
 export const logParserRegistry = new ExtensibleLogParser();
@@ -12,11 +13,13 @@ export const logParserRegistry = new ExtensibleLogParser();
 export function activate(context: vscode.ExtensionContext) {
   console.log("TraceBack is now active");
   
-  // Empty function to replace status bar updates since we've removed the status bars
   const updateStatusBars = () => {};
 
-  // Create the LogExplorerProvider instance
+  // Create other providers
   const logExplorerProvider = new LogExplorerProvider(context);
+  const variableExplorerProvider = registerVariableExplorer(context);
+  const callStackExplorerProvider = registerCallStackExplorer(context);
+  const variableDecorator = new VariableDecorator(context);
 
   // Register the tree view
   const treeView = vscode.window.createTreeView("logExplorer", {
@@ -24,19 +27,8 @@ export function activate(context: vscode.ExtensionContext) {
     showCollapseAll: false,
   });
 
-  // Create the variable decorator
-  const variableDecorator = new VariableDecorator(context);
-
-  // Register the Variables view
-  const variableExplorerProvider = registerVariableExplorer(context);
-
-  // Register the Call Stack view
-  const callStackExplorerProvider = registerCallStackExplorer(context);
-
-  // Connect the Variables view with the decorator
+  // Connect providers
   variableExplorerProvider.setVariableDecorator(variableDecorator);
-
-  // Associate the Variables and Call Stack views with the Logs view
   logExplorerProvider.setVariableExplorer(variableExplorerProvider);
   logExplorerProvider.setCallStackExplorer(callStackExplorerProvider);
 
@@ -213,7 +205,6 @@ export function activate(context: vscode.ExtensionContext) {
     }
   );
 
-
   // Command to store Axiom API token securely
   const storeAxiomTokenCommand = vscode.commands.registerCommand(
     "traceback.storeAxiomToken",
@@ -335,6 +326,7 @@ export function activate(context: vscode.ExtensionContext) {
 
   context.subscriptions.push(
     treeView,
+    openSettingsCommand,
     refreshCommand,
     showLogsCommand,
     filterCommand,
@@ -350,9 +342,12 @@ export function activate(context: vscode.ExtensionContext) {
     getAxiomTokenCommand,
     getAxiomDatasetCommand,
     registerLogParserCommand,
-    openSettingsCommand,
-    openCallStackLocationCommand,
+    openCallStackLocationCommand
   );
+
+  // Initial refresh
+  updateStatusBars();
+  logExplorerProvider.refresh();
 }
 
 /**

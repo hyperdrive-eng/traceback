@@ -16,6 +16,11 @@ interface CallerNode {
   isLoading?: boolean;
 }
 
+interface CallStackCache {
+  children: CallerNode[];
+  lastUpdated: string;
+}
+
 /**
  * TreeItem for call stack entries in the Call Stack Explorer
  */
@@ -79,6 +84,7 @@ export class CallStackExplorerProvider implements vscode.TreeDataProvider<CallSt
   private callerAnalysis: CallerNode[] = [];
   private claudeService: ClaudeService = ClaudeService.getInstance();
   private isAnalyzing: boolean = false;
+  private callStackCache: Map<string, CallStackCache> = new Map();
 
   constructor(private context: vscode.ExtensionContext) {}
 
@@ -115,8 +121,16 @@ export class CallStackExplorerProvider implements vscode.TreeDataProvider<CallSt
   }
 
   public setCallStackAnalysisFromCache(analysis: CallerNode[]): void {
+    // Set the top-level analysis
     this.callerAnalysis = analysis;
-    this._onDidChangeTreeData.fire();
+
+    // Recursively load cached children for the entire top-level analysis
+    for (const topLevelCaller of this.callerAnalysis) {
+      this.loadChildrenFromCacheRecursive(topLevelCaller);
+    }
+
+    // Force a full refresh of the tree to show the loaded cache
+    this._onDidChangeTreeData.fire(undefined);
   }
 
   async findPotentialCallers(sourceFile: string, lineNumber: number): Promise<Array<{ filePath: string; lineNumber: number; code: string; functionName: string; functionRange?: vscode.Range }>> {
@@ -468,6 +482,16 @@ export class CallStackExplorerProvider implements vscode.TreeDataProvider<CallSt
 
     if (!element) {
       // Root level - show initial callers
+      if (this.callerAnalysis.length === 0) {
+        return [new CallStackTreeItem({
+          filePath: '',
+          lineNumber: 0,
+          code: 'No call stack found',
+          functionName: '',
+          confidence: 0,
+          explanation: 'Could not determine the call stack for this log entry'
+        }, this)];
+      }
       return this.callerAnalysis.map(caller => new CallStackTreeItem(caller, this, true));
     }
 
@@ -496,9 +520,28 @@ export class CallStackExplorerProvider implements vscode.TreeDataProvider<CallSt
 
       // If children haven't been analyzed yet, do it now
       if (!caller.children && !caller.isLoading) {
-        // Mark as loading
+        // Check cache first
+        const cacheKey = `${caller.filePath}:${caller.lineNumber}`;
+        const cached = this.callStackCache.get(cacheKey);
+        
+        if (cached) {
+          // Use cached results for the immediate children
+          caller.children = cached.children;
+
+          // Now, recursively load the children of these children from the cache
+          for (const child of caller.children) {
+            this.loadChildrenFromCacheRecursive(child);
+          }
+
+          // Refresh the specific item that was clicked. Since all descendants
+          // are now loaded in the data model, the tree view should render them.
+          this._onDidChangeTreeData.fire(treeItem);
+          return; // Return after handling cache
+        }
+
+        // Mark as loading (only if not cached)
         caller.isLoading = true;
-        this._onDidChangeTreeData.fire(treeItem);
+        this._onDidChangeTreeData.fire(treeItem); // Refresh item to show loading state
 
         vscode.window.showInformationMessage('Finding potential callers...');
         // Find potential callers for this location
@@ -515,8 +558,8 @@ export class CallStackExplorerProvider implements vscode.TreeDataProvider<CallSt
           // Analyze callers
           const analysis = await this.claudeService.analyzeCallers(
             lineText,
-            lineText, // Use the actual line as static search string since we're looking at code
-            [], // Empty log lines since we're analyzing code
+            lineText,
+            [],
             potentialCallers
           );
 
@@ -527,11 +570,27 @@ export class CallStackExplorerProvider implements vscode.TreeDataProvider<CallSt
             code: rc.code,
             functionName: rc.functionName,
             confidence: rc.confidence,
-            explanation: rc.explanation
+            explanation: rc.explanation,
+            children: undefined,
+            isLoading: false
           }));
+
+          // Cache the results (only the direct children)
+          this.callStackCache.set(cacheKey, {
+            children: caller.children, // Store only the direct children structure
+            lastUpdated: new Date().toISOString()
+          });
+
           vscode.window.showInformationMessage('Call location analysis complete');
         } else {
           caller.children = []; // Empty array to indicate analysis is complete
+          
+          // Cache empty results too
+          this.callStackCache.set(cacheKey, {
+            children: [],
+            lastUpdated: new Date().toISOString()
+          });
+
           vscode.window.showInformationMessage('No potential callers found');
         }
 
@@ -549,6 +608,37 @@ export class CallStackExplorerProvider implements vscode.TreeDataProvider<CallSt
         caller.children = [];
         this._onDidChangeTreeData.fire(treeItem);
       }
+    }
+  }
+
+  public clearCache(): void {
+    this.callStackCache.clear();
+  }
+
+  private loadChildrenFromCacheRecursive(node: CallerNode): void {
+    // Base case: If the node already has children defined (even an empty array),
+    // it means it was either analyzed or already processed by this function.
+    if (node.children !== undefined) {
+      // Still need to check descendants even if this node's children are loaded
+      for (const child of node.children) {
+         this.loadChildrenFromCacheRecursive(child);
+      }
+      return;
+    }
+
+    const cacheKey = `${node.filePath}:${node.lineNumber}`;
+    const cached = this.callStackCache.get(cacheKey);
+
+    if (cached) {
+      // Assign cached children
+      node.children = cached.children;
+      // Recursively load children for each newly assigned child
+      for (const child of node.children) {
+        this.loadChildrenFromCacheRecursive(child);
+      }
+    } else {
+      // If not in cache, mark children as undefined so it can be analyzed on demand later
+      node.children = undefined;
     }
   }
 }
