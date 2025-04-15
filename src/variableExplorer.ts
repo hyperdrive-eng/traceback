@@ -224,13 +224,20 @@ export class VariableExplorerProvider implements vscode.TreeDataProvider<Variabl
                             (this.currentLog.jsonPayload?.fields?.message) || 
                             (this.currentLog.jaegerSpan?.operationName) ||
                             'Log Entry';
-                            
-      items.push(new VariableItem(
+      
+      // For the header, we'll use the entire log object as the value for inspection
+      // But keep the description showing the timestamp for display
+      const headerItem = new VariableItem(
         headerMessage,
-        `Log from ${new Date(this.currentLog.timestamp).toLocaleString()}`,
+        this.currentLog, // Use the full log object for inspection
         'header',
         vscode.TreeItemCollapsibleState.None
-      ));
+      );
+      
+      // Override description to show timestamp instead of the full object 
+      headerItem.description = `Log from ${new Date(this.currentLog.timestamp).toLocaleString()}`;
+      
+      items.push(headerItem);
       
       // Add Claude's inferred variables if available
       if (this.currentLog.claudeAnalysis?.variables) {
