@@ -839,67 +839,92 @@ export class SpanGroupItem extends vscode.TreeItem {
 export class LogTreeItem extends vscode.TreeItem {
   private static readonly MAX_MESSAGE_LENGTH = 100;
   private static firstLogTime: number | null = null;
-  private static idCounter = 0;  // Add a counter for generating unique IDs
+  private static idCounter = 0;  // Keep the counter for unique IDs
 
-  constructor(
-    public readonly log: LogEntry,
-    isSpanRoot: boolean = false
-  ) {
-    const message = log.message || log.rawText || 'No message';
-    const label = `${dayjs(log.timestamp).format('HH:mm:ss.SSS')} [${log.severity.toUpperCase()}] ${message.substring(0, 100)}${message.length > 100 ? '...' : ''}`;
+  constructor(public readonly log: LogEntry) {
+    let fullMessage: string;
 
-    let collapsibleState = vscode.TreeItemCollapsibleState.None;
-    if (isSpanRoot && (log.jsonPayload?.spans?.length || log.jaegerSpan?.references?.length || log.axiomSpan?.children?.length)) {
-      collapsibleState = vscode.TreeItemCollapsibleState.Collapsed;
+    // Handle Jaeger trace format
+    if (log.jaegerSpan) {
+      // Use operationName as the main message
+      const operationName = log.jaegerSpan.operationName;
+
+      // Extract an event message if available (from log entries)
+      let eventMessage = '';
+      if (log.jaegerSpan.logs && log.jaegerSpan.logs.length > 0) {
+        // Find event field in the first log entry
+        const eventField = log.jaegerSpan.logs[0].fields.find(field => field.key === 'event');
+        if (eventField) {
+          eventMessage = ` - ${eventField.value}`;
+        }
+      }
+
+      // Look for important tags to display
+      let tagInfo = '';
+      const importantTags = ['http.method', 'http.status_code', 'error', 'rpc.method'];
+      for (const tagName of importantTags) {
+        const tag = log.jaegerSpan.tags.find(t => t.key === tagName);
+        if (tag) {
+          tagInfo += ` [${tag.key}=${tag.value}]`;
+        }
+      }
+
+      fullMessage = `${operationName}${eventMessage}${tagInfo}`;
+    }
+    // Handle Axiom trace format
+    else if (log.axiomSpan) {
+      // Use span name as the main message
+      const operationName = log.axiomSpan.name || 'Unknown operation';
+
+      // Build extra information from important attributes
+      let attributeInfo = '';
+      const importantAttrs = [
+        'http.method',
+        'http.status_code',
+        'error',
+        'rpc.method',
+        'attributes.http.method',
+        'attributes.http.status_code',
+        'attributes.error.type'
+      ];
+
+      for (const attrName of importantAttrs) {
+        if (log.axiomSpan[attrName]) {
+          attributeInfo += ` [${attrName.replace('attributes.', '')}=${log.axiomSpan[attrName]}]`;
+        }
+      }
+
+      // Include duration if available
+      const duration = log.axiomSpan.duration ? ` (${log.axiomSpan.duration})` : '';
+
+      fullMessage = `${operationName}${duration}${attributeInfo}`;
+    }
+    // Handle original log format
+    else if (log.jsonPayload?.fields) {
+      const message = log.jsonPayload.fields.message || '';
+      const chain = log.jsonPayload.fields.chain ? `[${log.jsonPayload.fields.chain}] ` : '';
+      fullMessage = `${chain}${message}`;
+    }
+    // Fallback to unified message field or rawText
+    else {
+      fullMessage = log.message || log.rawText || 'No message';
     }
 
-    super(label, collapsibleState);
+    const truncatedMessage = LogTreeItem.truncateMessage(fullMessage);
+    super(truncatedMessage, vscode.TreeItemCollapsibleState.None);
 
-    this.tooltip = new vscode.MarkdownString(`**Timestamp:** ${log.timestamp}\n\n**Severity:** ${log.severity}\n\n**Target:** ${log.target || 'N/A'}\n\n\`\`\`\n${log.rawText}\n\`\`\``);
-    this.description = log.target ? `(${log.target})` : '';
-    
     // Generate a unique ID by combining available identifiers with a counter
     this.id = log.insertId || log.jaegerSpan?.spanID || `${log.timestamp}_${LogTreeItem.idCounter++}`;
-
-    // Set icon based on severity
-    switch (log.severity.toUpperCase()) {
-      case 'ERROR':
-      case 'CRITICAL':
-      case 'FATAL':
-        this.iconPath = new vscode.ThemeIcon('error', new vscode.ThemeColor('errorForeground'));
-        break;
-      case 'WARNING':
-        this.iconPath = new vscode.ThemeIcon('warning', new vscode.ThemeColor('list.warningForeground'));
-        break;
-      case 'INFO':
-        this.iconPath = new vscode.ThemeIcon('info');
-        break;
-      case 'DEBUG':
-      case 'TRACE':
-        this.iconPath = new vscode.ThemeIcon('debug');
-        break;
-      default:
-        this.iconPath = new vscode.ThemeIcon('circle-filled');
-    }
-
-    this.command = {
-      command: 'traceback.openLog',
-      title: 'Open Log',
-      arguments: [log]
-    };
-
-    this.contextValue = 'logEntry';
 
     // Initialize first log time if not set
     if (LogTreeItem.firstLogTime === null) {
       LogTreeItem.firstLogTime = new Date(log.timestamp).getTime();
     }
 
-    // Calculate relative time
+    // Calculate and format relative time
     const currentLogTime = new Date(log.timestamp).getTime();
     const timeDiff = currentLogTime - LogTreeItem.firstLogTime;
 
-    // Format relative time
     let relativeTime;
     if (timeDiff === 0) {
       relativeTime = '+0ms';
@@ -914,11 +939,50 @@ export class LogTreeItem extends vscode.TreeItem {
     }
 
     this.description = `(${relativeTime})`;
+
+    // Set the icon based on severity
+    this.iconPath = this.getIcon(log.severity);
+
+    // Use simpler tooltip format
+    this.tooltip = new vscode.MarkdownString(`**Timestamp:** ${log.timestamp}\n\n**Severity:** ${log.severity}\n\n**Target:** ${log.target || 'N/A'}\n\n\`\`\`\n${log.rawText}\n\`\`\``);
+
+    this.command = {
+      command: 'traceback.openLog',
+      title: 'Open Log',
+      arguments: [log]
+    };
+
+    this.contextValue = 'logEntry';
   }
 
   // Reset both firstLogTime and idCounter when logs are reloaded
   public static resetFirstLogTime(): void {
     LogTreeItem.firstLogTime = null;
     LogTreeItem.idCounter = 0;  // Reset the counter
+  }
+
+  private getIcon(level: string): vscode.ThemeIcon {
+    switch (level.toUpperCase()) {
+      case 'ERROR':
+      case 'CRITICAL':
+      case 'FATAL':
+        return new vscode.ThemeIcon('error', new vscode.ThemeColor('charts.red'));
+      case 'WARNING':
+        return new vscode.ThemeIcon('warning', new vscode.ThemeColor('charts.yellow'));
+      case 'INFO':
+        return new vscode.ThemeIcon('info', new vscode.ThemeColor('charts.blue'));
+      case 'DEBUG':
+      case 'TRACE':
+        return new vscode.ThemeIcon('debug', new vscode.ThemeColor('charts.green'));
+      default:
+        return new vscode.ThemeIcon('circle-filled');
+    }
+  }
+
+  private static truncateMessage(message: string): string {
+    if (message.length <= this.MAX_MESSAGE_LENGTH) {
+      return message;
+    }
+    return message.substring(0, this.MAX_MESSAGE_LENGTH - 3) + '...';
   }
 }
