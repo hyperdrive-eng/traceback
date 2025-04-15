@@ -409,7 +409,7 @@ export function registerVariableExplorer(context: vscode.ExtensionContext): Vari
   const variableExplorerProvider = new VariableExplorerProvider(context);
   
   // Register the tree view with the updated ID
-  const treeView = vscode.window.createTreeView('logVariablesExplorer', {
+  const treeView = vscode.window.createTreeView('logVariableExplorer', {
     treeDataProvider: variableExplorerProvider,
     showCollapseAll: true
   });

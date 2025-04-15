@@ -17,10 +17,8 @@
   ],
   "activationEvents": [
     "onView:logExplorer",
-    "onView:logDetailView",
-    "onView:logVariablesExplorer",
+    "onView:logVariableExplorer",
     "onView:callStackExplorer",
-    "onView:logDetailView",
     "onCommand:traceback.showLogs",
     "onCommand:traceback.refreshLogs",
     "onCommand:traceback.createSampleLogs",
@@ -126,7 +124,7 @@
           "contextualTitle": "Logs Explorer"
         },
         {
-          "id": "logVariablesExplorer",
+          "id": "logVariableExplorer",
           "name": "Variables",
           "icon": "$(symbol-variable)",
           "contextualTitle": "Variable Explorer"
