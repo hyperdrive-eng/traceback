@@ -40,3 +40,9 @@ jobs:
         with:
           files: "*.vsix"
           tag_name: ${{ github.event.inputs.version }}
+          
+      # Publish to VS Code Marketplace
+      - name: Publish to VS Code Marketplace
+        run: npx vsce publish
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
