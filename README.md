@@ -2,33 +2,30 @@
 
 A VS Code extension that brings telemetry data (traces, logs, and metrics) into your code.
 
-## Get started
+## Demo
 
-1. Install TraceBack extension
-    1. [Download](https://github.com/hyperdrive-eng/traceback/releases) latest `.vsix` 
-    1. Install VSIX
+## Quick Start
 
-        <img src="https://github.com/user-attachments/assets/1b219565-cf72-4c4a-85a7-659796779803">
+1. [Install extension](https://marketplace.visualstudio.com/items/?itemName=hyperdrive-eng.traceback)
 
-1. Open TraceBack settings
+1. Open settings
 
-   <img src="https://github.com/user-attachments/assets/a25c776d-adc7-4f57-9f69-5c1ec2ff9cc0">
+   <img width="550" alt="open settings with command palette" src="https://github.com/user-attachments/assets/a25c776d-adc7-4f57-9f69-5c1ec2ff9cc0">
 
-1. Choose a data source (local file, public URL, copy/paste, Axiom.co)
+1. Loads logs
 
-    <img width="1053" alt="image" src="https://github.com/user-attachments/assets/94e2e749-0f66-4b9d-8bc9-40f71795022d" />
+    <img width="750" alt="choose data sources in settings" src="https://github.com/user-attachments/assets/94e2e749-0f66-4b9d-8bc9-40f71795022d" />
 
-1. Load and select a log from the sidebar
+1. Debug your code
 
-    <img src="https://github.com/user-attachments/assets/9e5c942c-6d40-48ac-8d14-d94ac49c4f6c">
+    <img width="750" alt="select log and debug code" src="https://github.com/user-attachments/assets/9e5c942c-6d40-48ac-8d14-d94ac49c4f6c">
 
 
 ## Features
 
-- Click on any telemetry entry to highlight the corresponding line of code
-- View variable values next to their declarations
-- Navigate code execution by clicking on telemetry entries
-
+- Go to line of code associated with a log
+- Go to parent
+- See runtime state in your editor
 
 ## Development
 
