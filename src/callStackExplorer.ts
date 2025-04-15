@@ -69,6 +69,21 @@ interface CallStackCache {
 }
 
 /**
+ * Helper function to check if a file path is a test file
+ */
+function isTestPath(filePath: string): boolean {
+  const normalizedPath = filePath.toLowerCase();
+  return normalizedPath.includes('/test/') ||
+         normalizedPath.includes('/tests/') ||
+         normalizedPath.includes('/__tests__/') ||
+         normalizedPath.includes('/__test__/') ||
+         normalizedPath.includes('.test.') ||
+         normalizedPath.includes('.spec.') ||
+         normalizedPath.includes('_test.') ||
+         normalizedPath.includes('_spec.');
+}
+
+/**
  * TreeItem for call stack entries in the Call Stack Explorer
  */
 export class CallStackTreeItem extends vscode.TreeItem {
@@ -334,6 +349,11 @@ export class CallStackExplorerProvider implements vscode.TreeDataProvider<CallSt
 
             if (locations) {
                 for (const location of locations) {
+                    // Skip test files
+                    if (isTestPath(location.uri.fsPath)) {
+                        continue;
+                    }
+
                     // Skip self-references (the function definition itself)
                     if (location.uri.fsPath === sourceFile &&
                         location.range.start.line === selectionRange.start.line) {
