@@ -9,7 +9,7 @@
   },
   "license": "Apache-2.0",
   "engines": {
-    "vscode": "^1.60.0"
+    "vscode": "^1.74.0"
   },
   "categories": [
     "Debuggers",
@@ -104,6 +104,11 @@
         "title": "Open TraceBack Settings",
         "category": "TraceBack",
         "icon": "$(settings-gear)"
+      },
+      {
+        "command": "traceback.inspectVariableFromContext",
+        "title": "Inspect Value",
+        "icon": "$(eye)"
       }
     ],
     "viewsContainers": {
@@ -160,6 +165,12 @@
           "command": "traceback.copySpanValue",
           "when": "viewItem == spanDetail",
           "group": "inline"
+        },
+        {
+          "command": "traceback.inspectVariableFromContext",
+          "title": "Inspect Value",
+          "when": "viewItem =~ /.*-inspectable$/",
+          "group": "inline@1"
         }
       ]
     },
@@ -184,7 +195,7 @@
     "@types/glob": "^7.2.0",
     "@types/node": "^16.18.36",
     "@types/node-fetch": "^2.6.12",
-    "@types/vscode": "^1.60.0",
+    "@types/vscode": "^1.74.0",
     "@typescript-eslint/eslint-plugin": "^5.59.11",
     "@typescript-eslint/parser": "^5.59.11",
     "@vscode/vsce": "^3.3.2",

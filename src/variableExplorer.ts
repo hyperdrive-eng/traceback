@@ -9,6 +9,16 @@ export class VariableItem extends vscode.TreeItem {
   public readonly itemValue: any;
   // Make itemType accessible for tree data provider
   public readonly itemType: string;
+  // Make buttons accessible - added for VS Code 1.74+
+  public buttons?: { 
+    iconPath: vscode.ThemeIcon; 
+    tooltip: string;
+    command?: string | {
+      command: string;
+      title: string;
+      arguments?: any[];
+    };
+  }[];
   
   constructor(
     public readonly label: string,
@@ -49,6 +59,22 @@ export class VariableItem extends vscode.TreeItem {
     
     // Set tooltip with extended information
     this.tooltip = `${label}: ${this.description}`;
+    
+    // Set a specific contextValue for items that can be inspected (for context menu)
+    if (itemType === 'header' || itemType === 'property' || itemType === 'variable' || 
+        itemType === 'arrayItem' || itemType === 'section') {
+      this.contextValue = `${itemType}-inspectable`;
+      
+      // Add eye button for VS Code 1.74.0+ (buttons property is available)
+      this.buttons = [
+        {
+          iconPath: new vscode.ThemeIcon('eye'),
+          tooltip: 'Inspect Value',
+          // Use a separate command for button clicks to handle context
+          command: 'traceback.inspectVariableFromContext'
+        }
+      ];
+    }
   }
   
   /**
@@ -414,6 +440,25 @@ export function registerVariableExplorer(context: vscode.ExtensionContext): Vari
     showCollapseAll: true
   });
   
+  // Since onDidClickTreeItem isn't available in VS Code 1.74, we'll rely on:
+  // 1. The context menu for eye icon in the tree
+  // 2. Creating a custom event handler for TreeView selection changes
+  
+  treeView.onDidChangeSelection((e) => {
+    // Only handle single selections
+    if (e.selection.length === 1) {
+      const item = e.selection[0];
+      
+      // If the item has the inspect context value, consider opening the inspect UI
+      // Note: this will be triggered on any tree item selection, which may not be ideal
+      // We'll keep this commented out to avoid unexpected behavior
+      // 
+      // if (item.contextValue && item.contextValue.endsWith('-inspectable')) {
+      //   vscode.commands.executeCommand('traceback.inspectVariableValue', item.label, item.itemValue);
+      // }
+    }
+  });
+  
   // Register a command to copy variable values
   const copyValueCommand = vscode.commands.registerCommand(
     'traceback.copyVariableValue',
@@ -435,8 +480,172 @@ export function registerVariableExplorer(context: vscode.ExtensionContext): Vari
     }
   );
   
+  // Register a command to inspect variable value
+  const inspectVariableCommand = vscode.commands.registerCommand(
+    'traceback.inspectVariableValue',
+    // Handle both direct args and context cases
+    async (variableNameArg?: string, variableValueArg?: any) => {
+      let variableName = variableNameArg;
+      let variableValue = variableValueArg;
+      
+      // If no arguments provided or they're undefined, try to find variable from context
+      if (variableName === undefined || variableValue === undefined) {
+        console.log('Finding variable from context...');
+        
+        try {
+          // Get the currently focused item from the tree view
+          const selection = treeView.selection;
+          if (selection.length > 0) {
+            const selectedItem = selection[0];
+            variableName = selectedItem.label.toString();
+            variableValue = selectedItem.itemValue;
+            console.log('Using selected item:', { variableName, variableValue });
+          } else {
+            // No selection - try to get active tree item by querying visible items
+            // This is necessary because button clicks might not select the item
+            const msg = 'Cannot inspect: Please select a variable first.';
+            vscode.window.showInformationMessage(msg);
+            return;
+          }
+        } catch (err) {
+          console.error('Error finding variable context:', err);
+          vscode.window.showErrorMessage('Error inspecting variable: ' + String(err));
+          return;
+        }
+      }
+      
+      // Format the value for display with special handling for undefined
+      let stringValue = 'undefined';
+      
+      if (variableValue !== undefined) {
+        stringValue = typeof variableValue === 'object' 
+          ? JSON.stringify(variableValue, null, 2)
+          : String(variableValue);
+      }
+      
+      // For small values, show in an input box
+      if (stringValue.length < 1000) {
+        const inputBox = vscode.window.createInputBox();
+        inputBox.title = `Inspect: ${variableName}`;
+        inputBox.value = stringValue;
+        inputBox.password = false;
+        inputBox.ignoreFocusOut = true;
+        inputBox.enabled = false; // Make it read-only
+        
+        // Show the input box
+        inputBox.show();
+        
+        // Hide it when pressing escape
+        inputBox.onDidHide(() => inputBox.dispose());
+      } else {
+        // For larger values, create a temporary webview panel
+        // that can be closed with Escape and allows scrolling
+        const panel = vscode.window.createWebviewPanel(
+          'variableInspect',
+          `Inspect: ${variableName}`,
+          vscode.ViewColumn.Active,
+          {
+            enableScripts: false,
+            retainContextWhenHidden: false
+          }
+        );
+        
+        // Style the webview content for readability with scrolling
+        panel.webview.html = `
+          <!DOCTYPE html>
+          <html lang="en">
+          <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>Variable Inspector</title>
+            <style>
+              body {
+                padding: 10px;
+                font-family: var(--vscode-editor-font-family);
+                font-size: var(--vscode-editor-font-size);
+                line-height: 1.5;
+                word-wrap: break-word;
+                white-space: pre-wrap;
+                max-width: 100%;
+                overflow-x: auto;
+              }
+              .value {
+                background-color: var(--vscode-editor-background);
+                color: var(--vscode-editor-foreground);
+                padding: 10px;
+                border-radius: 3px;
+                overflow-x: auto;
+              }
+              .escape-hint {
+                font-style: italic;
+                opacity: 0.8;
+                margin-top: 10px;
+                font-size: 0.9em;
+              }
+            </style>
+          </head>
+          <body>
+            <h3>${escapeHtml(variableName)}</h3>
+            <div class="value">${escapeHtml(stringValue)}</div>
+            <div class="escape-hint">Press 'Escape' to close this view</div>
+          </body>
+          </html>
+        `;
+      }
+    }
+  );
+  
+  // Helper function to escape HTML characters
+  function escapeHtml(unsafe: string): string {
+    return unsafe
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#039;");
+  }
+  
+  // Register a command to inspect variable from context menu or button click
+  const inspectVariableFromContextCommand = vscode.commands.registerCommand(
+    'traceback.inspectVariableFromContext',
+    (contextItem?: any) => {
+      // Convert the provided context to VariableItem type if possible
+      const item = contextItem as VariableItem;
+      // Get the item from the command context (when invoked from context menu)
+      if (item && item.label && item.itemValue !== undefined) {
+        vscode.commands.executeCommand('traceback.inspectVariableValue', item.label, item.itemValue);
+        return;
+      }
+      
+      // If no item provided directly, use the currently selected item
+      // This handles button clicks where item context isn't passed
+      try {
+        if (treeView.selection.length > 0) {
+          const selectedItem = treeView.selection[0];
+          if (selectedItem && selectedItem.label && selectedItem.itemValue !== undefined) {
+            vscode.commands.executeCommand('traceback.inspectVariableValue', 
+                                          selectedItem.label, 
+                                          selectedItem.itemValue);
+            return;
+          }
+        }
+        // If we got here, we couldn't find a valid item to inspect
+        vscode.window.showInformationMessage('Please select a variable to inspect');
+      } catch (error) {
+        console.error('Error inspecting variable:', error);
+        vscode.window.showErrorMessage('Error inspecting variable: ' + String(error));
+      }
+    }
+  );
+  
   // Add to the extension context
-  context.subscriptions.push(treeView, copyValueCommand, showVariableCommand);
+  context.subscriptions.push(
+    treeView, 
+    copyValueCommand, 
+    showVariableCommand, 
+    inspectVariableCommand,
+    inspectVariableFromContextCommand
+  );
   
   return variableExplorerProvider;
 }
