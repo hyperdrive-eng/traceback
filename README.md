@@ -2,8 +2,6 @@
 
 A VS Code extension that brings telemetry data (traces, logs, and metrics) into your code.
 
-## Demo
-
 ## Quick Start
 
 1. [Install extension](https://marketplace.visualstudio.com/items/?itemName=hyperdrive-eng.traceback)
