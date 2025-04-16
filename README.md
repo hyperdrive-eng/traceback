@@ -32,6 +32,10 @@ A VS Code extension that brings telemetry data (traces, logs, and metrics) into 
 
     <img width="376" alt="image" src="https://github.com/user-attachments/assets/681d10f6-d4c3-4478-9bf4-7790b272a050" />
 
+1. Set Claude API Key
+
+    <img width="609" alt="image" src="https://github.com/user-attachments/assets/da51c800-1393-47e8-b5de-32026ac23938" />
+
 1. Click on a log
 
    <img width="1465" alt="image" src="https://github.com/user-attachments/assets/98a0dad4-0164-4034-a064-343ff36a38aa" />
