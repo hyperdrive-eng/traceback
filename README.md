@@ -8,33 +8,35 @@ A VS Code extension that brings telemetry data (traces, logs, and metrics) into 
 
 1. [Install extension](https://marketplace.visualstudio.com/items/?itemName=hyperdrive-eng.traceback)
 
-1. Loads logs
+1. Import logs
 
-    <img width="750" alt="choose data sources in settings" src="https://github.com/user-attachments/assets/94e2e749-0f66-4b9d-8bc9-40f71795022d" />
+    <img width="828" alt="image" src="https://github.com/user-attachments/assets/13eeb086-93d9-44fb-aca8-bde34225f37a" />
 
-1. Debug your code
+1. Debug your code with the logs
 
     <img width="750" alt="select log and debug code" src="https://github.com/user-attachments/assets/9e5c942c-6d40-48ac-8d14-d94ac49c4f6c">
-
-## Features
-
-- Visualize the likely call stack given a set of logs
-- Go to the line of code that emitted a log
-- View the logs that were emitted in a given call stack
 
 ## Usage
 
 1. Open settings
 
-   <img width="550" alt="open settings with command palette" src="https://github.com/user-attachments/assets/a25c776d-adc7-4f57-9f69-5c1ec2ff9cc0">
+    <img width="84" alt="image" src="https://github.com/user-attachments/assets/c9511b63-28c5-4255-9c62-27063e8068ce" />
 
 1. Import logs (copy/paste, import from file, import from web, import from Axiom.co)
 
+    <img width="828" alt="image" src="https://github.com/user-attachments/assets/13eeb086-93d9-44fb-aca8-bde34225f37a" />
+
 1. Select a repository
 
-1. Select a log
+    <img width="376" alt="image" src="https://github.com/user-attachments/assets/681d10f6-d4c3-4478-9bf4-7790b272a050" />
 
-1. Select a parent
+1. Click on a log
+
+   <img width="1465" alt="image" src="https://github.com/user-attachments/assets/98a0dad4-0164-4034-a064-343ff36a38aa" />
+
+1. Click on a parent
+
+    <img width="1460" alt="image" src="https://github.com/user-attachments/assets/d426cf41-6a11-47bd-8af8-871d0b8bedfb" />
 
 
 ## Example 
@@ -71,7 +73,7 @@ A VS Code extension that brings telemetry data (traces, logs, and metrics) into 
 
 1. Click on its parent in the call stack
 
-<img width="558" alt="image" src="https://github.com/user-attachments/assets/3d45bc2f-258a-43c9-939b-eb6d9ad76785" />
+    <img width="558" alt="image" src="https://github.com/user-attachments/assets/3d45bc2f-258a-43c9-939b-eb6d9ad76785" />
 
 1. See its parent in the context of your code
 
