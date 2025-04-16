@@ -2,67 +2,77 @@
 
 A VS Code extension that brings telemetry data (traces, logs, and metrics) into your code.
 
-## Get started
+## Quick Start
 
-1. Install TraceBack extension
-    1. [Download](https://github.com/hyperdrive-eng/traceback/releases) latest `.vsix` 
-    1. Install VSIX
+1. [Install extension](https://marketplace.visualstudio.com/items/?itemName=hyperdrive-eng.traceback)
 
-        <img src="https://github.com/user-attachments/assets/1b219565-cf72-4c4a-85a7-659796779803">
+1. Import logs
 
-1. Open TraceBack settings
+    <img width="828" alt="image" src="https://github.com/user-attachments/assets/13eeb086-93d9-44fb-aca8-bde34225f37a" />
 
-   <img src="https://github.com/user-attachments/assets/a25c776d-adc7-4f57-9f69-5c1ec2ff9cc0">
+1. Debug your code with the logs
 
-1. Choose a data source (local file, public URL, copy/paste, Axiom.co)
+    <img width="750" alt="select log and debug code" src="https://github.com/user-attachments/assets/9e5c942c-6d40-48ac-8d14-d94ac49c4f6c">
 
-    <img width="1053" alt="image" src="https://github.com/user-attachments/assets/94e2e749-0f66-4b9d-8bc9-40f71795022d" />
+## Usage
 
-1. Load and select a log from the sidebar
+1. Open settings
 
-    <img src="https://github.com/user-attachments/assets/9e5c942c-6d40-48ac-8d14-d94ac49c4f6c">
+    <img width="84" alt="image" src="https://github.com/user-attachments/assets/c9511b63-28c5-4255-9c62-27063e8068ce" />
+
+1. Import logs (copy/paste, import from file, import from web, import from Axiom.co)
+
+    <img width="828" alt="image" src="https://github.com/user-attachments/assets/13eeb086-93d9-44fb-aca8-bde34225f37a" />
+
+1. Select a repository
+
+    <img width="376" alt="image" src="https://github.com/user-attachments/assets/681d10f6-d4c3-4478-9bf4-7790b272a050" />
+
+1. Click on a log
+
+   <img width="1465" alt="image" src="https://github.com/user-attachments/assets/98a0dad4-0164-4034-a064-343ff36a38aa" />
+
+1. Click on a parent
+
+    <img width="1460" alt="image" src="https://github.com/user-attachments/assets/d426cf41-6a11-47bd-8af8-871d0b8bedfb" />
 
 
-## Features
+## Example 
 
-- Click on any telemetry entry to highlight the corresponding line of code
-- View variable values next to their declarations
-- Navigate code execution by clicking on telemetry entries
+1. Clone this demo repository: [`hyperdrive-eng/playground`](https://github.com/hyperdrive-eng/playground)
 
+    ```sh
+    git clone https://github.com/hyperdrive-eng/playground.git
+    ```
 
-## Development
+1. Select the repository in the extension
 
-### Setup
+    <img width="376" alt="image" src="https://github.com/user-attachments/assets/681d10f6-d4c3-4478-9bf4-7790b272a050" />
 
-```sh
-# Install dependencies
-npm install
+1. Load demo logs from the repository
 
-# Compile the extension
-npm run compile
+    <img width="473" alt="image" src="https://github.com/user-attachments/assets/61f70062-7838-454a-945d-f036d692084b" />
 
-# Package the extension
-npm run package
-```
+1. Click on a log line
 
-### Run Extension
+    <img width="555" alt="image" src="https://github.com/user-attachments/assets/27d9d5bc-23ed-44f2-918d-cd810c43e987" />
 
-1. Build extension
+1. See log in the context of your code
 
-   ```sh
-   npm install
-   npm run compile
-   ```
+    <img width="1035" alt="image" src="https://github.com/user-attachments/assets/65403c78-abaf-49e2-85c4-9086b2a89d8d" />
 
-2. Open directory in VS Code or Cursor
+1. Click on a parent in the call stack
 
-   ```sh
-   cursor .
-   # or
-   code .
-   ```
+    <img width="557" alt="image" src="https://github.com/user-attachments/assets/41cc2d2a-df41-43d8-960f-8bf06eb68770" />
 
-3. Launch extension
+1. See parent in the context of your code
 
-   1. Press F5 to open a new window with your extension loaded
-   2. If you make changes to your extension, restart the extension development host
+    <img width="771" alt="image" src="https://github.com/user-attachments/assets/37e2ab7b-99d0-4c33-a110-3c84b52534fb" />
+
+1. Click on its parent in the call stack
+
+    <img width="558" alt="image" src="https://github.com/user-attachments/assets/3d45bc2f-258a-43c9-939b-eb6d9ad76785" />
+
+1. See its parent in the context of your code
+
+    <img width="546" alt="image" src="https://github.com/user-attachments/assets/4584aedb-8c27-4da4-84c4-78b70bab63c2" />
