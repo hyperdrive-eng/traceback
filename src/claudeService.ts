@@ -123,20 +123,29 @@ Log message: "${logMessage}"
 Rules for static search string:
 - Only include text that is guaranteed to be constant in the source code
 - Do NOT include any key-value pair formatting or variable values
+- Do NOT include log level indicators like [INFO], [DEBUG], [ERROR], etc. - they often aren't in the source code
+- Do NOT include timestamps or date formats as they are typically generated at runtime
 - When in doubt, be conservative and include less rather than more
-- You MUST return a non-empty static string, even if it's just the brackets
+- Focus on the actual message content that would appear in a logging statement
+- You MUST return a non-empty static string
 
 Rules for variables:
 - Extract all key-value pairs and dynamic values
 - Preserve variable names as they appear in the log
 - Keep the original data types where clear
 
-Example:
+Examples:
 Input: "[PlaceOrder] user_id=\"3790d414-165b-11f0-8ee4-96dac6adf53a\" user_currency=\"USD\""
-Static: "[PlaceOrder]"
+Static: "PlaceOrder"  (Note: brackets and log level removed)
 Variables: {
   "user_id": "3790d414-165b-11f0-8ee4-96dac6adf53a",
   "user_currency": "USD"
+}
+
+Input: "2023-04-17 12:36:39 [INFO] Tracking ID Created: 448ba545-9a1d-464d-83bc-d0c9e1ece0f9"
+Static: "Tracking ID Created:"  (Note: timestamp, [INFO] removed)
+Variables: {
+  "Tracking ID": "448ba545-9a1d-464d-83bc-d0c9e1ece0f9"
 }
 
 Remember: Both staticSearchString and variables fields are required in your response.
@@ -205,6 +214,21 @@ If you can't find any variables, return an empty object.`
             if (typeof toolOutput.variables !== 'object' || toolOutput.variables === null) {
                 console.warn('Claude response variables is not an object, using empty object');
                 toolOutput.variables = {};
+            }
+            
+            // Clean up the static search string by removing log level indicators
+            // This helps with matching source code that doesn't include these markers
+            if (toolOutput.staticSearchString) {
+                const logLevelPattern = /\[\s*(INFO|DEBUG|WARN|WARNING|ERROR|TRACE)\s*\]\s*/gi;
+                // Store the original search string for debugging
+                const originalSearchString = toolOutput.staticSearchString;
+                // Remove log level indicators
+                toolOutput.staticSearchString = toolOutput.staticSearchString.replace(logLevelPattern, '');
+                
+                // Log the change if we modified the search string
+                if (originalSearchString !== toolOutput.staticSearchString) {
+                    console.log(`Cleaned log level indicators from search string: "${originalSearchString}" → "${toolOutput.staticSearchString}"`);
+                }
             }
 
             return toolOutput as LLMLogAnalysis;
