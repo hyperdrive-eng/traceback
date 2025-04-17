@@ -568,6 +568,26 @@ export async function findCodeLocation(log: LogEntry, repoPath: string): Promise
         console.warn('No searchable content found in log entry');
         throw new Error('No searchable content found in log entry');
       }
+      
+      // Clean up search content before searching
+      // Remove log level indicators like [INFO], [DEBUG], etc.
+      searchContent = searchContent.replace(/\[\s*(INFO|DEBUG|WARN|WARNING|ERROR|TRACE)\s*\]\s*/gi, '');
+      
+      // Remove timestamps and date patterns
+      searchContent = searchContent.replace(/\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}(\.\d+)?(\s*[+-]\d{4})?\s*/, '');
+      searchContent = searchContent.replace(/\d{2}:\d{2}:\d{2}(\.\d+)?\s*/, '');
+      
+      // Trim whitespace from resulting search content
+      searchContent = searchContent.trim();
+      
+      // Log the cleaned search content
+      console.log(`Cleaned search content: "${searchContent}"`);
+      
+      // Verify we still have searchable content after cleaning
+      if (!searchContent || searchContent.trim().length < 3) {
+        console.warn('No searchable content left after cleaning log patterns');
+        throw new Error('No searchable content found after cleaning log patterns');
+      }
 
       // Extract target path hints from the log
       // Start with the unified target/serviceName fields
@@ -761,14 +781,19 @@ function calculateMatchScore(line: string, searchContent: string): number {
 
   // Clean the line and search content for comparison
   const cleanedLine = strippedLine.toLowerCase();
-  const cleanedSearch = searchContent.trim().toLowerCase();
-
+  
+  // Clean the search content by removing log level indicators
+  let cleanedSearch = searchContent.trim().toLowerCase();
+  
+  // Remove log level indicators from search string if present
+  cleanedSearch = cleanedSearch.replace(/\[\s*(INFO|DEBUG|WARN|WARNING|ERROR|TRACE)\s*\]\s*/gi, '');
+  
   // Skip empty lines after comment removal
   if (!cleanedLine) {
     return 0;
   }
 
-  // Quick check - if the search content isn't in the line at all, score is 0
+  // Quick check - if the cleaned search content isn't in the line at all, score is 0
   if (!cleanedLine.includes(cleanedSearch)) {
     return 0;
   }
@@ -849,16 +874,11 @@ function calculateMatchScore(line: string, searchContent: string): number {
   // Penalties for lines that are likely not the source of a log
 
   // 1. Penalty for likely being a printed log, not the source code
+  // But don't penalize for log level indicators since we already cleaned those from the search
   if (line.includes('│') || // Table/tree view character
       line.includes('|') || // Pipe character (often in logs)
       line.match(/\d{4}-\d{2}-\d{2}/) || // Date string
-      line.match(/\d{2}:\d{2}:\d{2}/) || // Time string
-      line.includes('[INFO]') || // Common log level indicator
-      line.includes('[DEBUG]') ||
-      line.includes('[WARN]') ||
-      line.includes('[WARNING]') ||
-      line.includes('[ERROR]') ||
-      line.includes('[TRACE]')) {
+      line.match(/\d{2}:\d{2}:\d{2}/)) { // Time string
     score -= 40; // Large penalty for log-like lines
   }
 
