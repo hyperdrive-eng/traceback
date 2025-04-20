@@ -271,6 +271,42 @@ export class PlainTextLogParser implements LogParser {
         serviceName: matches[2]?.trim(),
         message: matches[3]?.trim()
       })
+    },
+    // ISO8601 timestamp with log level and module path
+    // Example: 2025-04-19T17:49:01.282995Z  INFO boomerang_builder::env::build: Action enclave_cycle::__startup is unused, won't build
+    {
+      regex: /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+Z)\s+(\w+)\s+([^:]+):\s*(.+)$/,
+      extract: (matches: RegExpExecArray) => ({
+        timestamp: matches[1]?.trim(),
+        severity: matches[2]?.trim().toUpperCase(),
+        serviceName: matches[3]?.trim(),
+        message: matches[4]?.trim()
+      })
+    },
+    // Rust/Go-style logs with ISO8601 and field labels
+    // Example: 2025-04-19T15:04:32.431Z [INFO] server=web module=handler msg="Request processed" status=200
+    {
+      regex: /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z)\s+\[(\w+)\]\s+(.+)$/,
+      extract: (matches: RegExpExecArray) => {
+        const fields = matches[3]?.trim();
+        const fieldMap: Record<string, string> = {};
+        
+        // Extract key=value pairs, handling quoted values
+        const fieldRegex = /([^=\s]+)=(?:"([^"]*)"|([^\s]*))/g;
+        let fieldMatch;
+        while ((fieldMatch = fieldRegex.exec(fields)) !== null) {
+          const key = fieldMatch[1];
+          const value = fieldMatch[2] || fieldMatch[3]; // quoted or unquoted value
+          fieldMap[key] = value;
+        }
+        
+        return {
+          timestamp: matches[1]?.trim(),
+          severity: matches[2]?.trim().toUpperCase(),
+          serviceName: fieldMap.server || fieldMap.module || fieldMap.service || '',
+          message: fieldMap.msg || fieldMap.message || fields // fall back to full fields string if no message field
+        };
+      }
     }
   ];
 
@@ -322,6 +358,12 @@ export class PlainTextLogParser implements LogParser {
   }
 
   private parseLogLine(line: string): { matched: boolean; data: any } {
+    // Skip empty lines
+    if (!line.trim()) {
+      return { matched: false, data: {} };
+    }
+    
+    // Try all registered patterns
     for (const pattern of this.patterns) {
       const matches = pattern.regex.exec(line);
       if (matches) {
@@ -331,29 +373,93 @@ export class PlainTextLogParser implements LogParser {
         };
       }
     }
+    
+    // If no pattern matched, perform basic heuristic extraction
+    try {
+      // Try to extract timestamp and severity using common patterns
+      const timestampMatch = line.match(/^(\d{4}-\d{2}-\d{2}[T\s]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[-+]\d{2}:\d{2})?)/);
+      const timestamp = timestampMatch ? timestampMatch[1] : null;
+      
+      const severityMatch = line.match(/\b(TRACE|DEBUG|INFO|WARN(?:ING)?|ERROR|FATAL|CRITICAL)\b/i);
+      const severity = severityMatch ? severityMatch[0].toUpperCase() : null;
+      
+      // Try to identify a service name or module
+      const remainingText = timestampMatch && severityMatch 
+        ? line.replace(timestampMatch[0], '').replace(severityMatch[0], '').trim()
+        : line.trim();
+      
+      // Look for module/service pattern with colon
+      const moduleMatch = remainingText.match(/^([a-zA-Z0-9_.:]+):(.+)$/);
+      const serviceName = moduleMatch ? moduleMatch[1].trim() : '';
+      const message = moduleMatch ? moduleMatch[2].trim() : remainingText;
+      
+      // If we found at least a timestamp or severity, consider it a match
+      if (timestamp || severity) {
+        return {
+          matched: true,
+          data: {
+            timestamp: timestamp || new Date().toISOString(),
+            severity: severity || 'INFO',
+            serviceName: serviceName || '',
+            message: message || remainingText
+          }
+        };
+      }
+    } catch (error) {
+      console.debug('Error in heuristic log parsing:', error);
+    }
 
     return { matched: false, data: {} };
   }
 
   private createLogEntry(data: any, rawLine: string): LogEntry {
-    // Determine severity
-    let severity = data.severity || 'INFO';
-    if (rawLine.toLowerCase().includes('error') || rawLine.toLowerCase().includes('exception')) {
-      severity = 'ERROR';
-    } else if (rawLine.toLowerCase().includes('warn')) {
-      severity = 'WARNING';
+    // Determine severity - first use data.severity if present, then detect from content
+    let severity = data.severity || '';
+    
+    // If severity not provided by pattern, try to detect from line content
+    if (!severity) {
+      if (rawLine.toLowerCase().includes('error') || rawLine.toLowerCase().includes('exception')) {
+        severity = 'ERROR';
+      } else if (rawLine.toLowerCase().includes('warn')) {
+        severity = 'WARNING';
+      } else if (rawLine.toLowerCase().includes('info')) {
+        severity = 'INFO';
+      } else if (rawLine.toLowerCase().includes('debug')) {
+        severity = 'DEBUG';
+      } else if (rawLine.toLowerCase().includes('trace')) {
+        severity = 'TRACE';
+      } else {
+        severity = 'INFO'; // Default to INFO if we can't detect
+      }
     }
+    
+    // Normalize severity to standard values
+    severity = this.normalizeSeverity(severity);
 
     // Parse timestamp if available or use current time
     let timestamp = data.timestamp || new Date().toISOString();
-    if (data.timestamp && !data.timestamp.includes('T')) {
-      // Try to convert YYYY-MM-DD HH:MM:SS to ISO format
+    if (data.timestamp) {
       try {
-        timestamp = new Date(data.timestamp).toISOString();
+        // Handle various timestamp formats
+        if (!data.timestamp.includes('T')) {
+          // Try to convert YYYY-MM-DD HH:MM:SS to ISO format
+          timestamp = new Date(data.timestamp).toISOString();
+        } else if (!data.timestamp.includes('Z') && !data.timestamp.match(/[-+]\d{2}:\d{2}$/)) {
+          // Add Z if timestamp has T but no timezone
+          timestamp = new Date(data.timestamp + 'Z').toISOString();
+        } else {
+          // Already in ISO format
+          timestamp = data.timestamp;
+        }
       } catch (e) {
+        console.debug('Failed to parse timestamp:', data.timestamp, e);
         // Keep original if parsing fails
       }
     }
+
+    // Extract service name and message
+    const serviceName = data.serviceName || '';
+    const message = data.message || rawLine;
 
     return {
       severity,
@@ -361,13 +467,37 @@ export class PlainTextLogParser implements LogParser {
       rawText: rawLine,
       jsonPayload: {
         fields: {
-          message: data.message || rawLine
+          message: message
         },
-        target: data.serviceName || 'unknown'
+        target: serviceName || 'unknown'
       },
-      message: data.message || rawLine,
-      target: data.serviceName || 'unknown'
+      message: message,
+      target: serviceName || 'unknown',
+      serviceName: serviceName || ''
     };
+  }
+  
+  /**
+   * Normalize severity level to standard values
+   */
+  private normalizeSeverity(severity: string): string {
+    const upperSeverity = severity.toUpperCase();
+    
+    // Map to standard severity levels
+    if (upperSeverity.includes('TRACE')) {
+      return 'TRACE';
+    } else if (upperSeverity.includes('DEBUG')) {
+      return 'DEBUG';
+    } else if (upperSeverity.includes('INFO')) {
+      return 'INFO';
+    } else if (upperSeverity.includes('WARN')) {
+      return 'WARNING';
+    } else if (upperSeverity.includes('ERROR') || upperSeverity.includes('FATAL') || upperSeverity.includes('CRIT')) {
+      return 'ERROR';
+    }
+    
+    // Default to INFO if no match
+    return 'INFO';
   }
 }
 
@@ -393,6 +523,15 @@ export class ExtensibleLogParser implements LogParser {
   }
 
   async parse(content: string): Promise<LogEntry[]> {
+    // Early validation of content
+    if (!content || typeof content !== 'string' || content.trim().length === 0) {
+      console.warn('Empty or invalid log content provided');
+      return [];
+    }
+    
+    // Detect content format by examining the first few lines
+    const sampleLines = content.split('\n').slice(0, 10).filter(line => line.trim().length > 0);
+    
     // Try each parser in order
     for (const parser of this.plugins) {
       if (parser.canParse(content)) {
@@ -407,7 +546,21 @@ export class ExtensibleLogParser implements LogParser {
       }
     }
 
-    // If no parser can handle it, return empty array
+    // If no dedicated parser handled it, try a fallback approach
+    // This is useful for new log formats that don't match any existing pattern
+    console.warn('No dedicated parser matched, attempting fallback parsing');
+    
+    // Create a fallback parser that tries to handle line-by-line
+    const fallbackParser = new PlainTextLogParser();
+    const fallbackResult = await fallbackParser.parse(content);
+    
+    // If we got any valid logs from fallback parsing, return them
+    if (fallbackResult && fallbackResult.length > 0) {
+      console.log(`Log parsed with fallback parser, found ${fallbackResult.length} entries`);
+      return fallbackResult;
+    }
+    
+    // If still no results, return empty array
     console.warn('No suitable parser found for the log content');
     return [];
   }
@@ -654,9 +807,6 @@ export async function findCodeLocation(log: LogEntry, repoPath: string): Promise
         files = files.slice(0, MAX_FILES_TO_SEARCH);
       }
 
-      // Find the best matches by scanning files for the search content
-      let bestMatches: Array<{ file: string; line: number; score: number; fileScore: number }> = [];
-
       // Calculate file relevance scores first (based on filename/path)
       const fileScores = new Map<string, number>();
       for (const file of files) {
@@ -707,45 +857,97 @@ export async function findCodeLocation(log: LogEntry, repoPath: string): Promise
       // Limit to most relevant files first
       const topFiles = files.slice(0, Math.min(files.length, 1000));
 
-      // Search through files in priority order
-      let fileCount = 0;
-      for (const file of topFiles) {
-        fileCount++;
+      // Function to try finding matches with a given search string
+      async function tryFindMatches(searchStr: string, files: string[]): Promise<Array<{ file: string; line: number; score: number; fileScore: number }>> {
+        const matches: Array<{ file: string; line: number; score: number; fileScore: number }> = [];
+        let fileCount = 0;
 
-        // Update progress occasionally
-        if (fileCount % 50 === 0) {
-          progress.report({ message: `Searched ${fileCount}/${topFiles.length} files...` });
+        for (const file of files) {
+          fileCount++;
+          if (fileCount % 50 === 0) {
+            progress.report({ message: `Searched ${fileCount}/${files.length} files...` });
+          }
+
+          try {
+            const content = fs.readFileSync(file, 'utf8');
+            const lines = content.split('\n');
+            const fileScore = fileScores.get(file) || 0;
+            const maxLines = Math.min(lines.length, 5000);
+
+            for (let i = 0; i < maxLines; i++) {
+              const line = lines[i];
+              const matchScore = calculateMatchScore(line, searchStr);
+              if (matchScore > 0) {
+                matches.push({
+                  file: path.relative(repoPath, file),
+                  line: i,
+                  score: matchScore,
+                  fileScore: fileScore
+                });
+              }
+            }
+          } catch (error) {
+            console.warn(`Error reading file ${file}:`, error);
+          }
         }
 
-        try {
-          const content = fs.readFileSync(file, 'utf8');
-          const lines = content.split('\n');
-          const fileScore = fileScores.get(file) || 0;
+        return matches;
+      }
 
-          // Check up to 5000 lines (for extremely large files)
-          const maxLines = Math.min(lines.length, 5000);
+      // Helper function to split string into words, handling punctuation
+      function splitIntoWords(str: string): string[] {
+        // Split by whitespace and filter out empty strings
+        return str.split(/\s+/).filter(word => word.length > 0);
+      }
 
-          for (let i = 0; i < maxLines; i++) {
-            const line = lines[i];
-            // Calculate a match score for this line
-            const matchScore = calculateMatchScore(line, searchContent);
+      // Helper function to join words with proper spacing
+      function joinWords(words: string[]): string {
+        return words.join(' ').trim();
+      }
 
-            if (matchScore > 0) {
-              // Combine line match score with file relevance score
-              bestMatches.push({
-                file: path.relative(repoPath, file),
-                line: i,
-                score: matchScore,
-                fileScore: fileScore
-              });
+      // First try with the full search content
+      let bestMatches = await tryFindMatches(searchContent, topFiles);
+
+      // If no matches found, try progressive word removal strategies
+      if (bestMatches.length === 0) {
+        const words = splitIntoWords(searchContent);
+        
+        if (words.length > 1) {  // Only proceed if we have multiple words
+          console.log('No matches found with full search string, trying word removal strategies...');
+
+          // Try removing words from both ends, alternating between front and back
+          // and prioritizing longer substrings
+          for (let wordsToRemove = 1; wordsToRemove < words.length; wordsToRemove++) {
+            // Try removing from front
+            const frontRemaining = words.slice(wordsToRemove);
+            const frontSearchStr = joinWords(frontRemaining);
+            
+            if (frontSearchStr.length >= 3) {
+              console.log(`Trying search after removing ${wordsToRemove} word(s) from start: "${frontSearchStr}"`);
+              bestMatches = await tryFindMatches(frontSearchStr, topFiles);
+              if (bestMatches.length > 0) {
+                console.log(`Found matches after removing ${wordsToRemove} word(s) from start`);
+                break;
+              }
+            }
+
+            // If front removal didn't work, try removing from back
+            const backRemaining = words.slice(0, -wordsToRemove);
+            const backSearchStr = joinWords(backRemaining);
+            
+            if (backSearchStr.length >= 3) {
+              console.log(`Trying search after removing ${wordsToRemove} word(s) from end: "${backSearchStr}"`);
+              bestMatches = await tryFindMatches(backSearchStr, topFiles);
+              if (bestMatches.length > 0) {
+                console.log(`Found matches after removing ${wordsToRemove} word(s) from end`);
+                break;
+              }
             }
           }
-        } catch (error) {
-          console.warn(`Error reading file ${file}:`, error);
         }
       }
 
-      // Sort by combined score (line match score + file relevance score)
+      // Sort by combined score
       bestMatches.sort((a, b) => {
         const totalScoreA = a.score + a.fileScore;
         const totalScoreB = b.score + b.fileScore;
