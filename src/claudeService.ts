@@ -30,9 +30,8 @@ export class ClaudeService {
     private apiKey: string | undefined;
     private apiEndpoint: string = 'https://api.anthropic.com/v1/messages';
 
-    // Use different models for different tasks
-    private analysisModel: string = 'claude-3-haiku-20240307'; // Fast model for simple analysis
-    private callerModel: string = 'claude-3-7-sonnet-20250219';  // Use Sonnet for better balance of speed and quality
+    // Use a single model for all tasks since we're using the same one
+    private model: string = 'claude-3-7-sonnet-20250219';
 
     private constructor() {
         // Load API key from workspace state if available
@@ -52,13 +51,13 @@ export class ClaudeService {
         await vscode.workspace.getConfiguration('traceback').update('claudeApiKey', key, true);
     }
 
-    public async analyzeLog(logMessage: string): Promise<LLMLogAnalysis> {
+    public async analyzeLog(logMessage: string, language: string): Promise<LLMLogAnalysis> {
         if (!this.apiKey) {
             throw new Error('Claude API key not set. Please set your API key first.');
         }
 
         try {
-            const response = await this.callClaude(logMessage);
+            const response = await this.callClaude(logMessage, language);
             return response;
         } catch (error) {
             console.error('Error calling Claude API:', error);
@@ -90,7 +89,7 @@ export class ClaudeService {
         }
     }
 
-    private async callClaude(logMessage: string): Promise<LLMLogAnalysis> {
+    private async callClaude(logMessage: string, language: string): Promise<LLMLogAnalysis> {
         const tools = [{
             name: "analyze_log",
             description: "Analyze a log message to extract static search string and variables",
@@ -115,24 +114,19 @@ export class ClaudeService {
             messages: [{
                 role: 'user',
                 content: `Analyze this log message and extract:
-1. The static prefix or template part that would be in the source code
+1. Think and infer a possibly longest static substring that can be searched in the code base.
 2. Key-value pairs of any variables or dynamic values in the log
 
 Log message: "${logMessage}"
 
 Rules for static search string:
-- Only include text that is guaranteed to be constant in the source code
-- Do NOT include any key-value pair formatting or variable values
-- Do NOT include log level indicators like [INFO], [DEBUG], [ERROR], etc. - they often aren't in the source code
-- Do NOT include timestamps or date formats as they are typically generated at runtime
-- When in doubt, be conservative and include less rather than more
-- Focus on the actual message content that would appear in a logging statement
-- You MUST return a non-empty static string
+- Predicted staticSearchString should be exact substring of logMessage. 
+- logMessage.substring(staticSearchString) should be true.
+- No regular expressions allowed.
 
 Rules for variables:
 - Extract all key-value pairs and dynamic values
 - Preserve variable names as they appear in the log
-- Keep the original data types where clear
 
 Examples:
 Input: "[PlaceOrder] user_id=\"3790d414-165b-11f0-8ee4-96dac6adf53a\" user_currency=\"USD\""
@@ -140,19 +134,9 @@ Static: "PlaceOrder"  (Note: brackets and log level removed)
 Variables: {
   "user_id": "3790d414-165b-11f0-8ee4-96dac6adf53a",
   "user_currency": "USD"
-}
-
-Input: "2023-04-17 12:36:39 [INFO] Tracking ID Created: 448ba545-9a1d-464d-83bc-d0c9e1ece0f9"
-Static: "Tracking ID Created:"  (Note: timestamp, [INFO] removed)
-Variables: {
-  "Tracking ID": "448ba545-9a1d-464d-83bc-d0c9e1ece0f9"
-}
-
-Remember: Both staticSearchString and variables fields are required in your response.
-If you can't find any static text, return an empty string.
-If you can't find any variables, return an empty object.`
+}`
             }],
-            model: this.analysisModel,
+            model: this.model,
             max_tokens: 500,
             tools: tools,
             tool_choice: {
@@ -182,6 +166,9 @@ If you can't find any variables, return an empty object.`
             if (!response.ok) {
                 throw new Error(`Claude API error: ${response.statusText}\nDetails: ${JSON.stringify(responseData)}`);
             }
+
+            console.log("Log Message: ", logMessage);
+            console.log("Static Search String: ", responseData.content[0].input.staticSearchString);
 
             // Validate response structure
             if (!responseData.content ||
@@ -215,7 +202,7 @@ If you can't find any variables, return an empty object.`
                 console.warn('Claude response variables is not an object, using empty object');
                 toolOutput.variables = {};
             }
-            
+
             // Clean up the static search string by removing log level indicators
             // This helps with matching source code that doesn't include these markers
             if (toolOutput.staticSearchString) {
@@ -224,7 +211,7 @@ If you can't find any variables, return an empty object.`
                 const originalSearchString = toolOutput.staticSearchString;
                 // Remove log level indicators
                 toolOutput.staticSearchString = toolOutput.staticSearchString.replace(logLevelPattern, '');
-                
+
                 // Log the change if we modified the search string
                 if (originalSearchString !== toolOutput.staticSearchString) {
                     console.log(`Cleaned log level indicators from search string: "${originalSearchString}" → "${toolOutput.staticSearchString}"`);
@@ -244,6 +231,10 @@ If you can't find any variables, return an empty object.`
         allLogLines: string[],
         potentialCallers: Array<{ filePath: string; lineNumber: number; code: string; functionName: string; }>
     ): Promise<CallerAnalysis> {
+        // Filter and limit log lines to prevent prompt too long errors
+        const MAX_LOG_LINES = 20; // Reasonable limit to prevent context overflow
+        const filteredLogs = this.filterRelevantLogs(currentLogLine, allLogLines, MAX_LOG_LINES);
+
         const tools = [{
             name: "analyze_callers",
             description: "Analyze potential callers and rank them based on likelihood",
@@ -296,8 +287,8 @@ If you can't find any variables, return an empty object.`
 Current log line: "${currentLogLine}"
 Static search string used: "${staticSearchString}"
 
-All log lines in current session:
-${allLogLines.map(log => `- ${log}`).join('\n')}
+Most relevant log lines from current session:
+${filteredLogs.map(log => `- ${log}`).join('\n')}
 
 Potential callers found in codebase:
 ${potentialCallers.map(caller => `
@@ -307,7 +298,7 @@ Line ${caller.lineNumber}: ${caller.code}
 `).join('\n')}
 
 Rules for ranking:
-1. Consider the context from all log lines
+1. Consider the context from the provided log lines
 2. Look for patterns in function names and variable usage
 3. Consider the proximity of the code to related functionality
 4. Consider common logging patterns and practices
@@ -323,7 +314,7 @@ Return a ranked list of callers, each with:
 
 Use the analyze_callers function to return the results in the exact format required.`
             }],
-            model: this.callerModel,  // Use full model for complex analysis
+            model: this.model,  // Use same model for all tasks
             max_tokens: 4000,         // Keep full token limit for detailed analysis
             tools: tools,
             tool_choice: {
@@ -363,5 +354,63 @@ Use the analyze_callers function to return the results in the exact format requi
             console.error('Error calling Claude API:', error);
             throw error;
         }
+    }
+
+    /**
+     * Filter and limit log lines to the most relevant ones for analysis
+     * @param currentLogLine The log line being analyzed
+     * @param allLogLines All available log lines
+     * @param maxLines Maximum number of log lines to return
+     * @returns Array of filtered and limited log lines
+     */
+    private filterRelevantLogs(currentLogLine: string, allLogLines: string[], maxLines: number): string[] {
+        // Find the index of the current log line
+        const currentIndex = allLogLines.indexOf(currentLogLine);
+        if (currentIndex === -1) {
+            return [currentLogLine];
+        }
+
+        // Get surrounding context (prefer more recent logs)
+        const beforeCount = Math.floor(maxLines * 0.3); // 30% before
+        const afterCount = Math.floor(maxLines * 0.7);  // 70% after
+
+        const start = Math.max(0, currentIndex - beforeCount);
+        const end = Math.min(allLogLines.length, currentIndex + afterCount);
+
+        // Get the logs within our window
+        const contextLogs = allLogLines.slice(start, end);
+
+        // If we have room for more logs, try to find similar logs by pattern matching
+        if (contextLogs.length < maxLines) {
+            const remainingSlots = maxLines - contextLogs.length;
+            const patternLogs = this.findSimilarLogs(currentLogLine, allLogLines, contextLogs, remainingSlots);
+            return [...new Set([...contextLogs, ...patternLogs])];
+        }
+
+        return contextLogs;
+    }
+
+    /**
+     * Find logs that have similar patterns to the current log line
+     * @param currentLogLine The log line being analyzed
+     * @param allLogLines All available log lines
+     * @param excludeLogs Logs to exclude from the search
+     * @param maxCount Maximum number of similar logs to return
+     * @returns Array of similar log lines
+     */
+    private findSimilarLogs(currentLogLine: string, allLogLines: string[], excludeLogs: string[], maxCount: number): string[] {
+        // Simple similarity check based on word overlap
+        const currentWords = new Set(currentLogLine.toLowerCase().split(/\s+/));
+
+        return allLogLines
+            .filter(log => !excludeLogs.includes(log)) // Exclude logs we already have
+            .map(log => {
+                const words = log.toLowerCase().split(/\s+/);
+                const overlap = words.filter(word => currentWords.has(word)).length;
+                return { log, similarity: overlap / Math.max(words.length, currentWords.size) };
+            })
+            .sort((a, b) => b.similarity - a.similarity) // Sort by similarity
+            .slice(0, maxCount) // Take top N
+            .map(item => item.log);
     }
 }

@@ -807,9 +807,6 @@ export async function findCodeLocation(log: LogEntry, repoPath: string): Promise
         files = files.slice(0, MAX_FILES_TO_SEARCH);
       }
 
-      // Find the best matches by scanning files for the search content
-      let bestMatches: Array<{ file: string; line: number; score: number; fileScore: number }> = [];
-
       // Calculate file relevance scores first (based on filename/path)
       const fileScores = new Map<string, number>();
       for (const file of files) {
@@ -860,45 +857,97 @@ export async function findCodeLocation(log: LogEntry, repoPath: string): Promise
       // Limit to most relevant files first
       const topFiles = files.slice(0, Math.min(files.length, 1000));
 
-      // Search through files in priority order
-      let fileCount = 0;
-      for (const file of topFiles) {
-        fileCount++;
+      // Function to try finding matches with a given search string
+      async function tryFindMatches(searchStr: string, files: string[]): Promise<Array<{ file: string; line: number; score: number; fileScore: number }>> {
+        const matches: Array<{ file: string; line: number; score: number; fileScore: number }> = [];
+        let fileCount = 0;
 
-        // Update progress occasionally
-        if (fileCount % 50 === 0) {
-          progress.report({ message: `Searched ${fileCount}/${topFiles.length} files...` });
+        for (const file of files) {
+          fileCount++;
+          if (fileCount % 50 === 0) {
+            progress.report({ message: `Searched ${fileCount}/${files.length} files...` });
+          }
+
+          try {
+            const content = fs.readFileSync(file, 'utf8');
+            const lines = content.split('\n');
+            const fileScore = fileScores.get(file) || 0;
+            const maxLines = Math.min(lines.length, 5000);
+
+            for (let i = 0; i < maxLines; i++) {
+              const line = lines[i];
+              const matchScore = calculateMatchScore(line, searchStr);
+              if (matchScore > 0) {
+                matches.push({
+                  file: path.relative(repoPath, file),
+                  line: i,
+                  score: matchScore,
+                  fileScore: fileScore
+                });
+              }
+            }
+          } catch (error) {
+            console.warn(`Error reading file ${file}:`, error);
+          }
         }
 
-        try {
-          const content = fs.readFileSync(file, 'utf8');
-          const lines = content.split('\n');
-          const fileScore = fileScores.get(file) || 0;
+        return matches;
+      }
 
-          // Check up to 5000 lines (for extremely large files)
-          const maxLines = Math.min(lines.length, 5000);
+      // Helper function to split string into words, handling punctuation
+      function splitIntoWords(str: string): string[] {
+        // Split by whitespace and filter out empty strings
+        return str.split(/\s+/).filter(word => word.length > 0);
+      }
 
-          for (let i = 0; i < maxLines; i++) {
-            const line = lines[i];
-            // Calculate a match score for this line
-            const matchScore = calculateMatchScore(line, searchContent);
+      // Helper function to join words with proper spacing
+      function joinWords(words: string[]): string {
+        return words.join(' ').trim();
+      }
 
-            if (matchScore > 0) {
-              // Combine line match score with file relevance score
-              bestMatches.push({
-                file: path.relative(repoPath, file),
-                line: i,
-                score: matchScore,
-                fileScore: fileScore
-              });
+      // First try with the full search content
+      let bestMatches = await tryFindMatches(searchContent, topFiles);
+
+      // If no matches found, try progressive word removal strategies
+      if (bestMatches.length === 0) {
+        const words = splitIntoWords(searchContent);
+        
+        if (words.length > 1) {  // Only proceed if we have multiple words
+          console.log('No matches found with full search string, trying word removal strategies...');
+
+          // Try removing words from both ends, alternating between front and back
+          // and prioritizing longer substrings
+          for (let wordsToRemove = 1; wordsToRemove < words.length; wordsToRemove++) {
+            // Try removing from front
+            const frontRemaining = words.slice(wordsToRemove);
+            const frontSearchStr = joinWords(frontRemaining);
+            
+            if (frontSearchStr.length >= 3) {
+              console.log(`Trying search after removing ${wordsToRemove} word(s) from start: "${frontSearchStr}"`);
+              bestMatches = await tryFindMatches(frontSearchStr, topFiles);
+              if (bestMatches.length > 0) {
+                console.log(`Found matches after removing ${wordsToRemove} word(s) from start`);
+                break;
+              }
+            }
+
+            // If front removal didn't work, try removing from back
+            const backRemaining = words.slice(0, -wordsToRemove);
+            const backSearchStr = joinWords(backRemaining);
+            
+            if (backSearchStr.length >= 3) {
+              console.log(`Trying search after removing ${wordsToRemove} word(s) from end: "${backSearchStr}"`);
+              bestMatches = await tryFindMatches(backSearchStr, topFiles);
+              if (bestMatches.length > 0) {
+                console.log(`Found matches after removing ${wordsToRemove} word(s) from end`);
+                break;
+              }
             }
           }
-        } catch (error) {
-          console.warn(`Error reading file ${file}:`, error);
         }
       }
 
-      // Sort by combined score (line match score + file relevance score)
+      // Sort by combined score
       bestMatches.sort((a, b) => {
         const totalScoreA = a.score + a.fileScore;
         const totalScoreB = b.score + b.fileScore;

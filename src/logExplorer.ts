@@ -435,7 +435,35 @@ export class LogExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
         let analysis = log.claudeAnalysis;
         if (!analysis) {
           progress.report({ message: 'Analyzing log with Claude...' });
-          analysis = await this.claudeService.analyzeLog(logMessage);
+          
+          // Get repository root path
+          const repoPath = this.context.globalState.get<string>('repoPath');
+          if (!repoPath) {
+            vscode.window.showErrorMessage('Repository root path is not set.');
+            return;
+          }
+
+          // Detect language based on repository files
+          let language = 'unknown';
+          try {
+            if (fs.existsSync(path.join(repoPath, 'package.json'))) {
+              language = 'TypeScript/JavaScript';
+            } else if (fs.existsSync(path.join(repoPath, 'requirements.txt')) || fs.existsSync(path.join(repoPath, 'setup.py'))) {
+              language = 'Python';
+            } else if (fs.existsSync(path.join(repoPath, 'pom.xml')) || fs.existsSync(path.join(repoPath, 'build.gradle'))) {
+              language = 'Java';
+            } else if (fs.existsSync(path.join(repoPath, 'Cargo.toml'))) {
+              language = 'Rust';
+            } else if (fs.existsSync(path.join(repoPath, 'go.mod'))) {
+              language = 'Go';
+            }
+            // Add more language detection as needed
+          } catch (error) {
+            console.error('Error detecting language:', error);
+            language = 'unknown';
+          }
+
+          analysis = await this.claudeService.analyzeLog(logMessage, language);
           log.claudeAnalysis = analysis;
           // Refresh variable explorer after analysis is complete
           if (this.variableExplorerProvider) {
