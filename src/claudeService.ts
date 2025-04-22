@@ -25,6 +25,12 @@ export interface CallerAnalysis {
     }>;
 }
 
+export interface RegexPattern {
+    pattern: string;
+    description: string;
+    extractionMap: Record<string, string>;
+}
+
 export class ClaudeService {
     private static instance: ClaudeService;
     private apiKey: string | undefined;
@@ -32,6 +38,8 @@ export class ClaudeService {
 
     // Use a single model for all tasks since we're using the same one
     private model: string = 'claude-3-7-sonnet-20250219';
+    // Use Claude Haiku for regex generation for faster responses and lower cost
+    private haikuModel: string = 'claude-3-haiku-20240307';
 
     private constructor() {
         // Load API key from workspace state if available
@@ -86,6 +94,28 @@ export class ClaudeService {
         } catch (error) {
             console.error('Error analyzing callers with Claude:', error);
             throw new Error('Failed to analyze callers with Claude');
+        }
+    }
+
+    /**
+     * Generate regex patterns for parsing log lines
+     * @param logSamples Array of log line samples to analyze
+     * @param expectedResults Optional map of expected parsing results for some samples
+     * @returns Array of regex patterns with extraction maps
+     */
+    public async generateLogParsingRegex(
+        logSamples: string[],
+        expectedResults?: Record<string, any>[]
+    ): Promise<RegexPattern[]> {
+        if (!this.apiKey) {
+            throw new Error('Claude API key not set. Please set your API key first.');
+        }
+
+        try {
+            return await this.callClaudeForRegexPatterns(logSamples, expectedResults);
+        } catch (error) {
+            console.error('Error generating regex patterns with Claude:', error);
+            throw new Error('Failed to generate regex patterns with Claude');
         }
     }
 
@@ -352,6 +382,187 @@ Use the analyze_callers function to return the results in the exact format requi
             return (responseData.content[0].input) as CallerAnalysis;
         } catch (error) {
             console.error('Error calling Claude API:', error);
+            throw error;
+        }
+    }
+
+    private async callClaudeForRegexPatterns(
+        logSamples: string[],
+        expectedResults?: Record<string, any>[]
+    ): Promise<RegexPattern[]> {
+        // Limit number of samples to avoid token limits
+        const MAX_SAMPLES = 20;
+        const selectedSamples = logSamples.slice(0, MAX_SAMPLES);
+
+        const tools = [{
+            name: "generate_log_regex",
+            description: "Generate regex patterns for parsing log lines",
+            input_schema: {
+                type: "object",
+                properties: {
+                    patterns: {
+                        type: "array",
+                        items: {
+                            type: "object",
+                            properties: {
+                                pattern: {
+                                    type: "string",
+                                    description: "The regular expression pattern in JavaScript syntax"
+                                },
+                                description: {
+                                    type: "string",
+                                    description: "Description of what this pattern matches"
+                                },
+                                extractionMap: {
+                                    type: "object",
+                                    description: "Maps regex capture group names to LogEntry fields",
+                                    properties: {
+                                        severity: {
+                                            type: "string",
+                                            description: "Capture group name for severity level"
+                                        },
+                                        timestamp: {
+                                            type: "string",
+                                            description: "Capture group name for timestamp"
+                                        },
+                                        message: {
+                                            type: "string",
+                                            description: "Capture group name for message content"
+                                        },
+                                        serviceName: {
+                                            type: "string",
+                                            description: "Capture group name for service name"
+                                        },
+                                    },
+                                    additionalProperties: true
+                                }
+                            },
+                            required: ["pattern", "description", "extractionMap"]
+                        }
+                    }
+                },
+                required: ["patterns"]
+            }
+        }];
+
+        let prompt = `Generate regular expression patterns to parse these log lines into a structured format. We need to extract key components:
+
+1. Severity level (e.g., INFO, DEBUG, ERROR) - if present
+2. Message content - the main content of the log (required)
+3. Variables - values shown in the log (e.g., "user_id=123") - if present
+4. Timestamp - in any format - if present
+5. Service name or component - if present
+
+Log samples:
+${selectedSamples.map((sample, i) => `${i+1}. ${sample}`).join('\n')}`;
+
+        // Add expected results for some samples if provided
+        if (expectedResults && expectedResults.length > 0) {
+            prompt += `\n\nFor some log lines, these are examples of the expected parsing results:`;
+            
+            for (let i = 0; i < Math.min(expectedResults.length, selectedSamples.length); i++) {
+                prompt += `\n\nLog: ${selectedSamples[i]}\nParsed:`;
+                
+                Object.entries(expectedResults[i]).forEach(([key, value]) => {
+                    prompt += `\n  ${key}: ${JSON.stringify(value)}`;
+                });
+            }
+        }
+
+        prompt += `\n
+Create one or more regex patterns that collectively handle these different log formats.
+
+For each pattern:
+1. Use JavaScript regex syntax with named capture groups (e.g., "(?<severity>INFO|ERROR)")
+2. Include a clear description of what types of logs the pattern matches
+3. Include an "extractionMap" that maps regex capture group names to LogEntry field names
+
+The pattern should be comprehensive enough to extract:
+- severity: The log severity level if present (INFO, DEBUG, ERROR, etc.)
+- timestamp: The timestamp in any format, if present
+- message: The main log message content
+- serviceName: The name of the service or component generating the log
+- Any other relevant fields
+
+Ensure the regex patterns:
+- Are compatible with JavaScript's regular expression engine
+- Use named capture groups for all extracted fields
+- Are flexible enough to handle variations in format
+- Are precise enough to avoid false positives
+- Collectively cover all the provided log samples
+- Handle both structured and unstructured log formats
+
+Return the patterns using the generate_log_regex function.`;
+
+        const request = {
+            messages: [{
+                role: 'user',
+                content: prompt
+            }],
+            model: this.haikuModel,  // Use Haiku for regex generation (faster, cheaper)
+            max_tokens: 4000,
+            tools: tools,
+            tool_choice: {
+                type: "tool",
+                name: "generate_log_regex"
+            }
+        };
+
+        try {
+            const response = await fetch(this.apiEndpoint, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Api-Key': this.apiKey!,
+                    'anthropic-version': '2023-06-01'
+                },
+                body: JSON.stringify(request)
+            });
+
+            let responseData;
+            try {
+                responseData = await response.json();
+            } catch (e) {
+                throw new Error(`Invalid JSON response: ${e}`);
+            }
+
+            if (!response.ok) {
+                throw new Error(`Claude API error: ${response.statusText}\nDetails: ${JSON.stringify(responseData)}`);
+            }
+
+            // Validate response structure
+            if (!responseData.content ||
+                !Array.isArray(responseData.content) ||
+                responseData.content.length === 0 ||
+                responseData.content[0].type !== 'tool_use' ||
+                !responseData.content[0].input ||
+                !responseData.content[0].input.patterns) {
+                throw new Error('Invalid response format from Claude API: Missing required structure');
+            }
+
+            // Extract patterns from response
+            const patterns = responseData.content[0].input.patterns;
+            
+            // Validate each pattern
+            for (const pattern of patterns) {
+                if (!pattern.pattern || !pattern.description || !pattern.extractionMap) {
+                    console.warn('Invalid pattern in Claude response:', pattern);
+                    continue;
+                }
+                
+                // Test if the pattern is a valid regex
+                try {
+                    new RegExp(pattern.pattern);
+                } catch (error) {
+                    console.warn(`Invalid regex pattern: ${pattern.pattern}`, error);
+                    // Remove invalid patterns
+                    patterns.splice(patterns.indexOf(pattern), 1);
+                }
+            }
+
+            return patterns as RegexPattern[];
+        } catch (error) {
+            console.error('Error calling Claude API for regex patterns:', error);
             throw error;
         }
     }
