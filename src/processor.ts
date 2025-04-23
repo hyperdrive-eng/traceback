@@ -378,7 +378,7 @@ export class PlainTextLogParser implements LogParser {
     // If no pattern matched, perform basic heuristic extraction
     try {
       // Try to extract timestamp and severity using common patterns
-      const timestampMatch = line.match(/^(\d{4}-\d{2}-\d{2}[T\s]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[-+]\d{2}:\d{2})?)/);
+      const timestampMatch = line.match(/^(\d{4}-\d{2}-\d{2}[T\s]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[-+]\d{4})?)/);
       const timestamp = timestampMatch ? timestampMatch[1] : null;
       
       const severityMatch = line.match(/\b(TRACE|DEBUG|INFO|WARN(?:ING)?|ERROR|FATAL|CRITICAL)\b/i);
@@ -918,35 +918,6 @@ export async function loadLogs(logPathOrUrl: string): Promise<LogEntry[]> {
   }
 }
 
-
-/**
- * Process traditional log format into LogEntry objects
- */
-function processTraditionalFormat(parsedData: any, rawContent: string): LogEntry[] {
-  // Parse as a single JSON array
-  const jsonLogs = parsedData as LogEntry[];
-
-  // Store the logs and add rawText
-  const logs = jsonLogs.map(log => {
-    // Add unified fields for compatibility
-    const message = log.jsonPayload?.fields?.message || log.message || '';
-    const target = log.jsonPayload?.target || '';
-
-    return {
-      ...log,
-      message,
-      target,
-      rawText: JSON.stringify(log)
-    };
-  });
-
-  if (logs.length === 0) {
-    vscode.window.showInformationMessage('No logs found in the file.');
-  }
-
-  return logs;
-}
-
 /**
  * Find the code location based on log information
  * This function has been simplified to better handle arbitrary log formats
@@ -954,7 +925,7 @@ function processTraditionalFormat(parsedData: any, rawContent: string): LogEntry
 export async function findCodeLocation(log: LogEntry, repoPath: string): Promise<{ file: string; line: number }> {
   try {
     // Progress indicator
-    return await vscode.window.withProgress({
+    const result = await vscode.window.withProgress({
       location: vscode.ProgressLocation.Notification,
       title: 'Finding code location...',
       cancellable: false
@@ -962,48 +933,17 @@ export async function findCodeLocation(log: LogEntry, repoPath: string): Promise
       // Extract searchable content from the log, prioritizing normalized fields
       let searchContent: string = log.message || '';
 
-      // If message is empty or too generic, try format-specific fields
-      if (!searchContent || searchContent.trim().length < 3) {
-        // Try Axiom format
-        if (log.axiomSpan) {
-          if (log.axiomSpan.name) searchContent = log.axiomSpan.name;
-        }
-        // Try jsonPayload as last resort
-        else if (log.jsonPayload?.fields?.message) {
-          searchContent = log.jsonPayload.fields.message;
-        }
-        // If all else fails, use the raw text
-        else if (log.rawText) {
-          searchContent = log.rawText;
-          // Limit length for performance
-          if (searchContent.length > 200) {
-            searchContent = searchContent.substring(0, 200);
-          }
-        }
-      }
-
       // If we still couldn't find anything searchable, we can't locate the source
       if (!searchContent || searchContent.trim().length < 3) {
         console.warn('No searchable content found in log entry');
         throw new Error('No searchable content found in log entry');
       }
       
-      // Clean up search content before searching
-      // Remove log level indicators like [INFO], [DEBUG], etc.
-      searchContent = searchContent.replace(/\[\s*(INFO|DEBUG|WARN|WARNING|ERROR|TRACE)\s*\]\s*/gi, '');
-      
-      // Remove timestamps and date patterns
-      searchContent = searchContent.replace(/\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}(\.\d+)?(\s*[+-]\d{4})?\s*/, '');
-      searchContent = searchContent.replace(/\d{2}:\d{2}:\d{2}(\.\d+)?\s*/, '');
-      
       // Trim whitespace from resulting search content
-      searchContent = searchContent.trim();
-      
-      // Log the cleaned search content
-      console.log(`Cleaned search content: "${searchContent}"`);
+      const query = searchContent.trim();
       
       // Verify we still have searchable content after cleaning
-      if (!searchContent || searchContent.trim().length < 3) {
+      if (!query || query.trim().length < 3) {
         console.warn('No searchable content left after cleaning log patterns');
         throw new Error('No searchable content found after cleaning log patterns');
       }
@@ -1026,499 +966,158 @@ export async function findCodeLocation(log: LogEntry, repoPath: string): Promise
         }
       }
 
-      // Normalize the target path
-      if (targetPath) {
-        targetPath = targetPath.toLowerCase()
-          .replace(/::/g, '/')
-          .replace(/-/g, '_')
-          .replace(/\s+/g, '_');
-      }
-
       progress.report({ message: 'Searching for matching source files...' });
 
-      // Search through source files
-      let files = await findSourceFiles(repoPath);
-
-      // If we have a target path, prioritize files that match
+      // Get workspace folders
+      const workspaceFolders = vscode.workspace.workspaceFolders;
+      if (!workspaceFolders || workspaceFolders.length === 0) {
+        throw new Error('No workspace folder is open');
+      }
+      
+      // Use the first workspace folder as the root
+      const workspaceRoot = workspaceFolders[0].uri.fsPath;
+      
+      
+      // Function to search a file for the query
+      async function searchFile(filePath: string, query: string): Promise<{ line: number } | null> {
+        try {
+          const content = fs.readFileSync(filePath, 'utf8');
+          
+          // First check if the file contains the query at all before line-by-line processing
+          if (!content.includes(query)) {
+            return null;
+          }
+          
+          // Only if the file contains the query, proceed with line-by-line search
+          const lines = content.split('\n');
+          
+          for (let i = 0; i < lines.length; i++) {
+            const line = lines[i];
+            if (line.toLowerCase().includes(query.toLowerCase())) {
+              return { line: i};
+            }
+          }
+          return null;
+        } catch (error) {
+          console.debug(`Error reading file ${filePath}:`, error);
+          return null;
+        }
+      }
+      
+      // Find all applicable source files
+      progress.report({ message: 'Finding source files...' });
+      let filesToSearch = await vscode.workspace.findFiles(
+        '**/*.{ts,tsx,js,jsx,vue,svelte,rs,go,py,java,cs,cpp,c,h,rb,php}',
+        '**/[node_modules,dist,build,.git,logs]/**'
+      );
+      
+      // If we have a target path, prioritize matching files
       if (targetPath) {
-        files.sort((a, b) => {
-          // Check for exact name matches first (prioritize)
-          const aBasename = path.basename(a).toLowerCase();
-          const bBasename = path.basename(b).toLowerCase();
-          const targetBasename = targetPath ? path.basename(targetPath).toLowerCase() : '';
-
-          // Check if the basename matches with or without extension
-          const aMatchesName = aBasename === targetBasename ||
-            aBasename.startsWith(targetBasename + '.') ||
-                              aBasename.includes(targetBasename);
-
-          const bMatchesName = bBasename === targetBasename ||
-            bBasename.startsWith(targetBasename + '.') ||
-                              bBasename.includes(targetBasename);
-
-          if (aMatchesName && !bMatchesName) return -1;
-          if (!aMatchesName && bMatchesName) return 1;
-
-          // Then check for path matches
-          const aContainsTarget = a.includes(targetPath) ? -1 : 0;
-          const bContainsTarget = b.includes(targetPath) ? -1 : 0;
-          return aContainsTarget - bContainsTarget;
+        const targetLower = targetPath.toLowerCase();
+        filesToSearch.sort((a, b) => {
+          const aContains = a.fsPath.toLowerCase().includes(targetLower) ? -1 : 0;
+          const bContains = b.fsPath.toLowerCase().includes(targetLower) ? -1 : 0;
+          return aContains - bContains;
         });
       }
-
-      // Limit search to a reasonable number of files for performance
-      const MAX_FILES_TO_SEARCH = 1000;
-      if (files.length > MAX_FILES_TO_SEARCH) {
-        console.warn(`Limiting search to ${MAX_FILES_TO_SEARCH} files out of ${files.length}`);
-        files = files.slice(0, MAX_FILES_TO_SEARCH);
-      }
-
-      // Calculate file relevance scores first (based on filename/path)
-      const fileScores = new Map<string, number>();
-      for (const file of files) {
-        const relativePath = path.relative(repoPath, file);
-        const fileName = path.basename(file).toLowerCase();
-        const fileExt = path.extname(file).toLowerCase();
-
-        // Base file score
-        let fileScore = 0;
-
-        // Boost score for files with relevant names
-        if (targetPath && fileName.includes(path.basename(targetPath).toLowerCase())) {
-          fileScore += 50; // Strong bonus for filename match
-        }
-
-        // Boost for primary code files (not utility, config, etc)
-        const isPrimaryCodeFile =
-          !fileName.includes('util') &&
-          !fileName.includes('helper') &&
-          !fileName.includes('common') &&
-          !fileName.startsWith('_') &&
-          !fileName.includes('test');
-
-        if (isPrimaryCodeFile) {
-          fileScore += 20;
-        }
-
-        // Boost for source files in key directories
-        const isInSourceDir =
-          relativePath.includes('/src/') ||
-          relativePath.includes('/lib/') ||
-          relativePath.includes('/app/') ||
-          relativePath.startsWith('src/') ||
-          relativePath.startsWith('lib/') ||
-          relativePath.startsWith('app/');
-
-        if (isInSourceDir) {
-          fileScore += 15;
-        }
-
-        // Store the file score
-        fileScores.set(file, fileScore);
-      }
-
-      // Sort files by relevance score for prioritized search
-      files.sort((a, b) => (fileScores.get(b) || 0) - (fileScores.get(a) || 0));
-
-      // Limit to most relevant files first
-      const topFiles = files.slice(0, Math.min(files.length, 1000));
-
-      // Function to try finding matches with a given search string
-      async function tryFindMatches(searchStr: string, files: string[]): Promise<Array<{ file: string; line: number; score: number; fileScore: number }>> {
-        const matches: Array<{ file: string; line: number; score: number; fileScore: number }> = [];
-        let fileCount = 0;
-
-        for (const file of files) {
-          fileCount++;
-          if (fileCount % 50 === 0) {
-            progress.report({ message: `Searched ${fileCount}/${files.length} files...` });
-          }
-
-          try {
-            const content = fs.readFileSync(file, 'utf8');
-            const lines = content.split('\n');
-            const fileScore = fileScores.get(file) || 0;
-            const maxLines = Math.min(lines.length, 5000);
-
-            for (let i = 0; i < maxLines; i++) {
-              const line = lines[i];
-              const matchScore = calculateMatchScore(line, searchStr);
-              if (matchScore > 0) {
-                matches.push({
-                  file: path.relative(repoPath, file),
-                  line: i,
-                  score: matchScore,
-                  fileScore: fileScore
-                });
-              }
+      
+      // Remove the file limit to search the entire codebase
+      console.log(`Searching all ${filesToSearch.length} files in the codebase`);
+      
+      // Search through the files
+      let searchCount = 0;
+      
+      
+      progress.report({ message: `Searching for "${query}" (processed ${searchCount} files)` });
+      
+      // Progress files in batches for better responsiveness
+      const BATCH_SIZE = 50;
+      
+      // Function to search all files with a given query
+      async function searchAllFiles(searchQuery: string): Promise<{file: string; line: number} | null> {
+        for (let i = 0; i < filesToSearch.length; i += BATCH_SIZE) {
+          const batch = filesToSearch.map(file => file.fsPath).slice(i, i + BATCH_SIZE);
+          
+          // Search files in parallel
+          const batchPromises = batch.map(async (file) => {
+            searchCount++;
+            if (searchCount % 100 === 0) {
+              progress.report({ message: `Searching for "${searchQuery}" (processed ${searchCount} files)` });
             }
-          } catch (error) {
-            console.warn(`Error reading file ${file}:`, error);
+            
+            const match = await searchFile(file, searchQuery);
+            if (match) {
+              const relativePath = path.relative(workspaceRoot, file);
+              return { file: relativePath, line: match.line };
+            }
+            return null;
+          });
+          
+          const batchResults = await Promise.all(batchPromises);
+          const validMatches = batchResults.filter(m => m !== null) as Array<{ file: string; line: number }>;
+          
+          if (validMatches.length > 0) {
+            return validMatches[0];
           }
         }
-
-        return matches;
-      }
-
-      // Helper function to split string into words, handling punctuation
-      function splitIntoWords(str: string): string[] {
-        // Split by whitespace and filter out empty strings
-        return str.split(/\s+/).filter(word => word.length > 0);
-      }
-
-      // Helper function to join words with proper spacing
-      function joinWords(words: string[]): string {
-        return words.join(' ').trim();
-      }
-
-      // First try with the full search content
-      let bestMatches = await tryFindMatches(searchContent, topFiles);
-
-      // If no matches found, try progressive word removal strategies
-      if (bestMatches.length === 0) {
-        const words = splitIntoWords(searchContent);
         
-        if (words.length > 1) {  // Only proceed if we have multiple words
-          console.log('No matches found with full search string, trying word removal strategies...');
-
-          // Try removing words from both ends, alternating between front and back
-          // and prioritizing longer substrings
-          for (let wordsToRemove = 1; wordsToRemove < words.length; wordsToRemove++) {
-            // Try removing from front
-            const frontRemaining = words.slice(wordsToRemove);
-            const frontSearchStr = joinWords(frontRemaining);
-            
-            if (frontSearchStr.length >= 3) {
-              console.log(`Trying search after removing ${wordsToRemove} word(s) from start: "${frontSearchStr}"`);
-              bestMatches = await tryFindMatches(frontSearchStr, topFiles);
-              if (bestMatches.length > 0) {
-                console.log(`Found matches after removing ${wordsToRemove} word(s) from start`);
-                break;
-              }
-            }
-
-            // If front removal didn't work, try removing from back
-            const backRemaining = words.slice(0, -wordsToRemove);
-            const backSearchStr = joinWords(backRemaining);
-            
-            if (backSearchStr.length >= 3) {
-              console.log(`Trying search after removing ${wordsToRemove} word(s) from end: "${backSearchStr}"`);
-              bestMatches = await tryFindMatches(backSearchStr, topFiles);
-              if (bestMatches.length > 0) {
-                console.log(`Found matches after removing ${wordsToRemove} word(s) from end`);
-                break;
-              }
-            }
+        return null; // No matches found
+      }
+      
+      // First, try with the exact query
+      progress.report({ message: `Searching for exact match: "${query}"` });
+      const exactMatch = await searchAllFiles(query);
+      
+      if (exactMatch) {
+        return exactMatch;
+      }
+      
+      // If exact match failed, try with variations
+      const words = query.split(/\s+/).filter(w => w.length > 0);
+      
+      // Only try variations if we have multiple words
+      if (words.length > 4) {
+        progress.report({ message: `No exact match found, trying variations...` });
+        
+        // Generate variations by removing words from front and back
+        const variations: string[] = [];
+        
+        // Remove words from the front (1, 2, 3, etc.)
+        for (let i = 1; i < words.length; i++) {
+          const frontVariation = words.slice(i).join(' ');
+          if (frontVariation.length >= 3) {
+            variations.push(frontVariation);
+          }
+          
+          // Remove words from the back (1, 2, 3, etc.)
+          const backVariation = words.slice(0, words.length - i).join(' ');
+          if (backVariation.length >= 3) {
+            variations.push(backVariation);
+          }
+        }
+        
+        // Try each variation until we find a match
+        for (const variation of variations) {
+          progress.report({ message: `Trying variation: "${variation}"` });
+          const match = await searchAllFiles(variation);
+          if (match) {
+            return match;
           }
         }
       }
-
-      // Sort by combined score
-      bestMatches.sort((a, b) => {
-        const totalScoreA = a.score + a.fileScore;
-        const totalScoreB = b.score + b.fileScore;
-        return totalScoreB - totalScoreA;
-      });
-
-      // Return the best match if any found
-      if (bestMatches.length > 0) {
-        return {
-          file: bestMatches[0].file,
-          line: bestMatches[0].line
-        };
-      }
-
-      throw new Error('No code location found');
+      
+      return null; // No matches found with any variation
     });
+
+    // Check result after withProgress finishes
+    if (result) {
+      return result;
+    }
+    throw new Error('No code location found');
   } catch (error) {
     console.error('Error in findCodeLocation:', error);
     throw error;
   }
-}
-
-/**
- * Calculate a score for how well a line matches the search content
- * Higher score means better match
- */
-function calculateMatchScore(line: string, searchContent: string): number {
-  // Strip comments for code files
-  const strippedLine = line.replace(/\/\/.*$/, '')  // C-style single line comments
-                           .replace(/\/\*[\s\S]*?\*\//, '')  // C-style block comments
-                           .replace(/#.*$/, '')  // Python/Ruby/Shell comments
-                           .trim();
-
-  // Clean the line and search content for comparison
-  const cleanedLine = strippedLine.toLowerCase();
-  
-  // Clean the search content by removing log level indicators
-  let cleanedSearch = searchContent.trim().toLowerCase();
-  
-  // Remove log level indicators from search string if present
-  cleanedSearch = cleanedSearch.replace(/\[\s*(INFO|DEBUG|WARN|WARNING|ERROR|TRACE)\s*\]\s*/gi, '');
-  
-  // Skip empty lines after comment removal
-  if (!cleanedLine) {
-    return 0;
-  }
-
-  // Quick check - if the cleaned search content isn't in the line at all, score is 0
-  if (!cleanedLine.includes(cleanedSearch)) {
-    return 0;
-  }
-
-  // Base score for containing the search content
-  let score = 10;
-
-  // Factors that suggest this is actual code that generated the log, not a log itself
-
-  // 1. Bonus for context clues indicating the line is inside actual code, not a printed log
-  const isLikelySourceCode =
-    // Contains code structure indicators
-    strippedLine.includes('{') ||
-    strippedLine.includes('}') ||
-    strippedLine.includes('(') ||
-    strippedLine.includes(')') ||
-    // Contains typical code keywords
-    /\b(if|else|for|while|switch|case|return|try|catch|class|interface)\b/.test(cleanedLine) ||
-    // Contains variable assignments
-    /[a-zA-Z0-9_]+ *= */.test(cleanedLine) ||
-    // Contains method/function calls
-    /[a-zA-Z0-9_]+\([^)]*\)/.test(cleanedLine);
-
-  if (isLikelySourceCode) {
-    score += 15;
-  }
-
-  // 2. Bonus for exact match but only if it appears to be source code
-  if (cleanedLine === cleanedSearch && isLikelySourceCode) {
-    score += 35;
-  }
-
-  // 3. Significant bonus for line containing function/method declaration
-  if (cleanedLine.includes('function ') ||
-    cleanedLine.includes('def ') ||
-    cleanedLine.match(/^\s*(public|private|protected)?\s*(static)?\s*(async)?\s*\w+\s*\([^)]*\)/) ||
-    cleanedLine.includes(' fn ') ||
-      /\bfunc\s+\w+\s*\(/.test(cleanedLine)) { // Go
-    score += 25;
-  }
-
-  // 4. Bonus for line containing logging, printing or error statements - these are typically the source of logs
-  if (cleanedLine.includes('console.log') ||
-    cleanedLine.includes('console.error') ||
-    cleanedLine.includes('console.info') ||
-    cleanedLine.includes('console.warn') ||
-    cleanedLine.includes('println') ||
-    cleanedLine.includes('print(') ||
-    cleanedLine.includes('printf') ||
-    cleanedLine.includes('log.') ||
-    cleanedLine.includes('logger.') ||
-      /\blog\s*\(/.test(cleanedLine) ||
-      cleanedLine.includes('throw new ')) {
-    score += 20;
-  }
-
-  // 5. Special bonus for common logging level patterns
-  const loggingLevelPatterns = [
-    /log\s*\.\s*(info|debug|warning|error|critical)\s*\(/i,
-    /logger\s*\.\s*(info|debug|warning|error|critical)\s*\(/i,
-    /console\s*\.\s*(log|info|debug|warn|error)\s*\(/i,
-    /println\s*!\s*\(/i,  // Rust
-    /print\s*f\s*!\s*\(/i, // Rust
-    /System\s*\.\s*out\s*\.\s*println/i, // Java
-    /fmt\s*\.\s*Printf/i, // Go
-    /printf\s*\(/i, // C
-    /NSLog\s*\(/i, // Objective-C
-    /Debug\s*\.\s*Log/i  // C#
-  ];
-
-  for (const pattern of loggingLevelPatterns) {
-    if (pattern.test(strippedLine)) {
-      score += 25;
-      break;
-    }
-  }
-
-  // Penalties for lines that are likely not the source of a log
-
-  // 1. Penalty for likely being a printed log, not the source code
-  // But don't penalize for log level indicators since we already cleaned those from the search
-  if (line.includes('│') || // Table/tree view character
-      line.includes('|') || // Pipe character (often in logs)
-      line.match(/\d{4}-\d{2}-\d{2}/) || // Date string
-      line.match(/\d{2}:\d{2}:\d{2}/)) { // Time string
-    score -= 40; // Large penalty for log-like lines
-  }
-
-  // 2. Penalty for generated log data or serialized data (looks like a log, not like code)
-  if (line.match(/^\s*{.*}$/) || // JSON-like
-      line.match(/^\s*\[.*\]$/) || // Array-like
-      line.match(/^\s*<.*>$/) || // XML-like
-      line.match(/^\s*-\s+\w+:/) || // YAML-like
-      line.includes(' = ') && line.includes(',') && !line.includes(';') && !line.includes('{')) { // Config-like
-    score -= 30;
-  }
-
-  // 3. Penalty for lines that are just imports or require statements
-  if (cleanedLine.startsWith('import ') ||
-    cleanedLine.startsWith('from ') ||
-    cleanedLine.startsWith('require(') ||
-    cleanedLine.startsWith('use ') ||
-      cleanedLine.startsWith('include ')) {
-    score -= 15;
-  }
-
-  // 4. Penalty for documentation or comment markers
-  if (line.startsWith('/**') ||
-    line.startsWith('*') ||
-    line.startsWith(' *') ||
-    line.includes('TODO:') ||
-    line.includes('NOTE:') ||
-    line.includes('@param') ||
-      line.includes('@return')) {
-    score -= 20;
-  }
-
-  // Bonus for search terms appearing as actual code elements
-  // This looks for the search term as a complete word/identifier in the code
-  const wordBoundaryRegex = new RegExp(`\\b${escapeRegExp(cleanedSearch)}\\b`, 'i');
-  if (wordBoundaryRegex.test(cleanedLine)) {
-    score += 10;
-  }
-
-  return Math.max(0, score);
-}
-
-/**
- * Escape special regex characters to use a string in a regex pattern
- */
-function escapeRegExp(string: string): string {
-  return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-
-async function findSourceFiles(dir: string): Promise<string[]> {
-  const files: string[] = [];
-
-  // Directories to skip
-  const skipDirs = new Set([
-    'node_modules',
-    'target',
-    'dist',
-    'build',
-    '.git',
-    'vendor',
-    'bin',
-    'obj',
-    'coverage',
-    '.next',
-    '.vscode',
-    '.idea',
-    'logs',          // Exclude logs directory
-    'log',           // Common logs directory name
-    'logger',
-    'example',       // Typically contains examples that might include log snippets
-    'examples',
-    'sample',
-    'samples',
-    'docs',          // Documentation often contains log samples
-    'doc',
-    'test-fixtures', // Often contains test log data
-    'fixtures'
-  ]);
-
-  // Source file extensions to include
-  const sourceExtensions = new Set([
-    // Web
-    '.ts', '.tsx', '.js', '.jsx', '.vue', '.svelte',
-    // Backend
-    '.rs', '.go', '.py', '.java', '.cs', '.cpp', '.c', '.h', '.rb', '.php',
-    // Config/Data (limited to actionable ones, exclude most data files)
-    '.toml'
-  ]);
-
-  // Excluded extensions that might contain log samples
-  const excludedExtensions = new Set([
-    '.log',
-    '.md',
-    '.txt',
-    '.json', // Often contains log samples or fixtures
-    '.yaml', '.yml', // Config but often with log examples
-    '.html', // May contain log examples in docs
-    '.csv',
-    '.xml'
-  ]);
-
-  try {
-    const entries = fs.readdirSync(dir, { withFileTypes: true });
-
-    for (const entry of entries) {
-      const fullPath = path.join(dir, entry.name);
-
-      // Skip files/dirs that match exclude patterns explicitly
-      if (shouldExcludePath(fullPath)) {
-        continue;
-      }
-
-      if (entry.isDirectory()) {
-        // Skip excluded directories
-        if (!skipDirs.has(entry.name.toLowerCase()) &&
-            !entry.name.toLowerCase().includes('log') && // Skip any dir with 'log' in the name
-            !entry.name.toLowerCase().includes('test')) { // Skip test directories
-          files.push(...await findSourceFiles(fullPath));
-        }
-      } else if (entry.isFile()) {
-        // Include only source files
-        const ext = path.extname(entry.name).toLowerCase();
-        if (sourceExtensions.has(ext) && !excludedExtensions.has(ext)) {
-          // Additional checks for filenames indicating logs
-          const lowerName = entry.name.toLowerCase();
-          const isLikelyLogFile =
-            lowerName.includes('log') ||
-            lowerName.includes('sample') ||
-            lowerName.includes('example') ||
-            lowerName.includes('fixture') ||
-            lowerName.includes('test');
-
-          if (!isLikelyLogFile) {
-            try {
-              // Quick check if file is readable and not too large
-              const stats = fs.statSync(fullPath);
-              const MAX_FILE_SIZE = 512 * 1024; // 512KB limit (reduced from 1MB)
-
-              if (stats.size <= MAX_FILE_SIZE) {
-                files.push(fullPath);
-              }
-            } catch (error) {
-              console.warn(`Skipping file ${fullPath}: ${error}`);
-            }
-          }
-        }
-      }
-    }
-  } catch (error) {
-    console.error(`Error reading directory ${dir}: ${error}`);
-  }
-
-  return files;
-}
-
-/**
- * Determines if a path should be excluded from code search
- */
-function shouldExcludePath(filePath: string): boolean {
-  const normalizedPath = filePath.toLowerCase();
-
-  // Exclude common paths that might contain log samples or test data
-  return normalizedPath.includes('/logs/') ||
-         normalizedPath.includes('/test/') ||
-         normalizedPath.includes('/tests/') ||
-         normalizedPath.includes('/fixtures/') ||
-         normalizedPath.includes('/examples/') ||
-         normalizedPath.includes('/sample/') ||
-         normalizedPath.includes('/samples/') ||
-         normalizedPath.includes('/doc/') ||
-         normalizedPath.includes('/docs/');
 }
 
 /**
@@ -1530,15 +1129,4 @@ async function getDatasetName(): Promise<string> {
 
   // Fallback to default if not set
   return dataset || 'otel-demo-traces';
-}
-
-function isLineMatch(line: string, searchContent: string): boolean {
-  // Remove comments and whitespace
-  const cleanedLine = line.replace(/\/\/.*$/, '').trim();
-
-  // Case-insensitive search for the content
-  return cleanedLine.toLowerCase().includes(searchContent.toLowerCase()) &&
-    // Ensure it's not just a variable declaration or import
-    !cleanedLine.startsWith('use ') &&
-    !cleanedLine.startsWith('let ');
 }
