@@ -4,3 +4,6 @@ node_modules
 *.log
 .vscode-test/
 *.vsix
+
+# JetBrains
+.idea/

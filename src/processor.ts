@@ -5,6 +5,7 @@ import { LogEntry } from './logExplorer';
 import { logLineDecorationType } from './decorations';
 import fetch from 'node-fetch';
 import { Axiom } from '@axiomhq/js';
+import { ClaudeService, RegexPattern } from './claudeService';
 
 /**
  * Load trace data from Axiom API
@@ -502,6 +503,270 @@ export class PlainTextLogParser implements LogParser {
 }
 
 /**
+ * Parser that uses Claude-generated regex patterns to parse log lines
+ */
+export class RegexLogParser implements LogParser {
+  private claudeService = ClaudeService.getInstance();
+  private patterns: RegexPattern[] = [];
+  private sampleLogs: string[] = [];
+  private maxSampleLogs = 20; // Maximum number of sample logs to collect for pattern generation
+  private hasGeneratedPatterns = false;
+
+  constructor() {
+    // Initially we don't have any patterns
+    // We'll collect sample logs and generate patterns when needed
+  }
+
+  canParse(content: string): boolean {
+    // This parser is a fallback that can handle anything
+    // But it should be tried after JSON parser since it's more expensive
+    return true;
+  }
+
+  async parse(content: string): Promise<LogEntry[]> {
+    // Split content into lines
+    const lines = content.split('\n').filter(line => line.trim().length > 0);
+    
+    // If we have no patterns yet, collect sample logs
+    if (this.patterns.length === 0 && !this.hasGeneratedPatterns) {
+      // Add new samples to our collection, up to the maximum
+      for (const line of lines) {
+        if (this.sampleLogs.length < this.maxSampleLogs) {
+          // Only add if it's not a duplicate
+          if (!this.sampleLogs.includes(line)) {
+            this.sampleLogs.push(line);
+          }
+        } else {
+          break;
+        }
+      }
+      
+      // If we have enough samples or this is a large log set, generate patterns
+      if (this.sampleLogs.length >= this.maxSampleLogs || lines.length > 50) {
+        await this.generatePatterns();
+      }
+    }
+    
+    // If we're still missing patterns, generate them now
+    if (this.patterns.length === 0) {
+      // If we don't have enough samples, use what we've got
+      if (this.sampleLogs.length === 0) {
+        // Take a sample from the current logs
+        this.sampleLogs = lines.slice(0, this.maxSampleLogs);
+      }
+      
+      await this.generatePatterns();
+    }
+    
+    // Now we should have patterns - parse the logs
+    return this.parseWithPatterns(lines);
+  }
+  
+  /**
+   * Use Claude to generate regex patterns based on sample logs
+   */
+  private async generatePatterns(): Promise<void> {
+    try {
+      if (this.sampleLogs.length === 0) {
+        // Don't attempt to generate patterns with no samples
+        console.warn('No sample logs to generate patterns from');
+        this.hasGeneratedPatterns = true; // Mark as tried
+        return;
+      }
+      
+      console.log(`Generating regex patterns from ${this.sampleLogs.length} sample logs...`);
+      
+      // Call Claude to generate patterns
+      this.patterns = await this.claudeService.generateLogParsingRegex(this.sampleLogs);
+      
+      console.log(`Generated ${this.patterns.length} regex patterns`);
+      
+      // Mark that we've generated patterns to avoid repeatedly trying if it fails
+      this.hasGeneratedPatterns = true;
+      
+      // Compile all the patterns for efficiency
+      this.patterns.forEach(pattern => {
+        try {
+          // Pre-compile the regex for efficiency
+          new RegExp(pattern.pattern);
+        } catch (error) {
+          console.error(`Invalid regex pattern: ${pattern.pattern}`, error);
+        }
+      });
+    } catch (error) {
+      console.error('Error generating regex patterns:', error);
+      // We'll continue without patterns and fall back to heuristic parsing
+      this.hasGeneratedPatterns = true; // Mark as tried to avoid retry spam
+    }
+  }
+  
+  /**
+   * Parse all logs using the generated patterns
+   */
+  private async parseWithPatterns(lines: string[]): Promise<LogEntry[]> {
+    const logs: LogEntry[] = [];
+    
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      
+      // Try each pattern in order until one matches
+      let matched = false;
+      
+      for (const patternObj of this.patterns) {
+        try {
+          const regex = new RegExp(patternObj.pattern);
+          const match = regex.exec(line);
+          
+          if (match) {
+            // Extract fields based on the pattern's extraction map
+            const extractedData: Record<string, string> = {};
+            
+            for (const [logEntryField, captureGroupName] of Object.entries(patternObj.extractionMap)) {
+              if (match.groups && match.groups[captureGroupName]) {
+                extractedData[logEntryField] = match.groups[captureGroupName];
+              }
+            }
+            
+            // Create LogEntry from extracted data
+            logs.push(this.createLogEntry(extractedData, line));
+            matched = true;
+            break;
+          }
+        } catch (error) {
+          console.debug(`Error with pattern ${patternObj.pattern}:`, error);
+          continue;
+        }
+      }
+      
+      // If no pattern matched, fall back to heuristic parsing
+      if (!matched) {
+        // Try to extract basic fields using heuristics
+        logs.push(this.createFallbackLogEntry(line));
+      }
+    }
+    
+    return logs;
+  }
+  
+  /**
+   * Create a LogEntry from the extracted fields
+   */
+  private createLogEntry(data: Record<string, string>, rawLine: string): LogEntry {
+    // Ensure required fields have sensible defaults
+    const severity = this.normalizeSeverity(data.severity || '');
+    
+    // Process timestamp
+    let timestamp = data.timestamp || new Date().toISOString();
+    if (data.timestamp) {
+      try {
+        // Try to normalize various timestamp formats
+        timestamp = new Date(data.timestamp).toISOString();
+      } catch (e) {
+        console.debug('Failed to parse timestamp:', data.timestamp);
+        timestamp = new Date().toISOString(); // Use current time as fallback
+      }
+    }
+    
+    // Ensure other fields are defined
+    const serviceName = data.serviceName || data.target || '';
+    const message = data.message || rawLine;
+    const target = serviceName || 'unknown';
+    
+    // Extract variables if they exist
+    const variables: Record<string, string> = {};
+    Object.entries(data).forEach(([key, value]) => {
+      if (key.startsWith('variable_') && value) {
+        // Remove the variable_ prefix from the key
+        const varName = key.substring(9);
+        variables[varName] = value;
+      }
+    });
+    
+    return {
+      severity,
+      timestamp,
+      rawText: rawLine,
+      serviceName,
+      message,
+      target,
+      jsonPayload: {
+        fields: {
+          message,
+          ...variables
+        },
+        target
+      }
+    };
+  }
+  
+  /**
+   * Create a basic LogEntry when no pattern matches
+   */
+  private createFallbackLogEntry(rawLine: string): LogEntry {
+    let severity = 'INFO';
+    
+    // Try to detect severity from content
+    if (rawLine.toLowerCase().includes('error') || rawLine.toLowerCase().includes('exception')) {
+      severity = 'ERROR';
+    } else if (rawLine.toLowerCase().includes('warn')) {
+      severity = 'WARNING';
+    } else if (rawLine.toLowerCase().includes('debug')) {
+      severity = 'DEBUG';
+    } else if (rawLine.toLowerCase().includes('info')) {
+      severity = 'INFO';
+    }
+    
+    // Try to extract service name if there's a pipe separator
+    let serviceName = 'unknown';
+    let message = rawLine;
+    
+    // Common format: service | message
+    const pipeMatch = rawLine.match(/^([^|]+)\|\s*(.+)$/);
+    if (pipeMatch) {
+      serviceName = pipeMatch[1].trim();
+      message = pipeMatch[2].trim();
+    }
+    
+    return {
+      severity,
+      timestamp: new Date().toISOString(),
+      rawText: rawLine,
+      message,
+      target: serviceName,
+      serviceName,
+      jsonPayload: {
+        fields: {
+          message
+        },
+        target: serviceName
+      }
+    };
+  }
+  
+  /**
+   * Normalize severity levels to standard values
+   */
+  private normalizeSeverity(severity: string): string {
+    const upperSeverity = severity.toUpperCase();
+    
+    if (upperSeverity.includes('TRACE')) {
+      return 'TRACE';
+    } else if (upperSeverity.includes('DEBUG')) {
+      return 'DEBUG';
+    } else if (upperSeverity.includes('INFO')) {
+      return 'INFO';
+    } else if (upperSeverity.includes('WARN')) {
+      return 'WARNING';
+    } else if (upperSeverity.includes('ERROR') || upperSeverity.includes('FATAL') || upperSeverity.includes('CRIT')) {
+      return 'ERROR';
+    }
+    
+    // Default to INFO if no match
+    return 'INFO';
+  }
+}
+
+/**
  * Parser for custom plugins/adapters
  */
 export class ExtensibleLogParser implements LogParser {
@@ -510,6 +775,7 @@ export class ExtensibleLogParser implements LogParser {
   constructor() {
     // Register built-in parsers
     this.registerParser(new JsonLogParser());
+    this.registerParser(new RegexLogParser());
     this.registerParser(new PlainTextLogParser());
   }
 
@@ -1276,4 +1542,3 @@ function isLineMatch(line: string, searchContent: string): boolean {
     !cleanedLine.startsWith('use ') &&
     !cleanedLine.startsWith('let ');
 }
-
