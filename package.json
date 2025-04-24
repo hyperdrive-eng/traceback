@@ -35,17 +35,27 @@
     "configuration": {
       "title": "TraceBack",
       "properties": {
-          "traceback.claudeApiKey": {
-              "type": "string",
-              "default": "",
-              "description": "API key for Claude AI service"
-          }
+        "traceback.claudeApiKey": {
+          "type": "string",
+          "default": "",
+          "description": "API key for Claude AI service"
+        },
+        "traceback.ollamaEndpoint": {
+          "type": "string",
+          "default": "http://localhost:11434",
+          "description": "Endpoint for Ollama API (required for code search)"
+        }
       }
     },
     "commands": [
       {
         "command": "traceback.setClaudeApiKey",
         "title": "Set Claude API Key",
+        "category": "TraceBack"
+      },
+      {
+        "command": "traceback.setOllamaEndpoint",
+        "title": "Set Ollama Endpoint",
         "category": "TraceBack"
       },
       {
@@ -111,6 +121,11 @@
         "command": "traceback.inspectVariableFromContext",
         "title": "Inspect Value",
         "icon": "$(eye)"
+      },
+      {
+        "command": "traceback.openCodeLocation",
+        "title": "Open Code Location",
+        "category": "Traceback"
       }
     ],
     "viewsContainers": {
@@ -141,6 +156,10 @@
           "name": "Call Stack",
           "icon": "$(callstack-view-icon)",
           "contextualTitle": "Call Stack Explorer"
+        },
+        {
+          "id": "codeLocationsExplorer",
+          "name": "Code Locations"
         }
       ]
     },
@@ -210,6 +229,7 @@
   },
   "dependencies": {
     "@axiomhq/js": "^1.3.1",
+    "@anthropic-ai/sdk": "^0.18.0",
     "chalk": "^4.1.2",
     "dayjs": "^1.11.9",
     "node-fetch": "^2.6.7"
