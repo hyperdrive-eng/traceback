@@ -896,9 +896,48 @@ export class LogTreeItem extends vscode.TreeItem {
   private static idCounter = 0;  // Keep the counter for unique IDs
 
   constructor(public readonly log: LogEntry) {
-    // Use the message field directly, fall back to rawText only if necessary
-    const message = log.message || log.rawText || 'No message';
-    const truncatedMessage = LogTreeItem.truncateMessage(message);
+    let fullMessage: string;
+
+    // Handle Axiom trace format
+    if (log.axiomSpan) {
+      // Use span name as the main message
+      const operationName = log.axiomSpan.name || 'Unknown operation';
+
+      // Build extra information from important attributes
+      let attributeInfo = '';
+      const importantAttrs = [
+        'http.method',
+        'http.status_code',
+        'error',
+        'rpc.method',
+        'attributes.http.method',
+        'attributes.http.status_code',
+        'attributes.error.type'
+      ];
+
+      for (const attrName of importantAttrs) {
+        if (log.axiomSpan[attrName]) {
+          attributeInfo += ` [${attrName.replace('attributes.', '')}=${log.axiomSpan[attrName]}]`;
+        }
+      }
+
+      // Include duration if available
+      const duration = log.axiomSpan.duration ? ` (${log.axiomSpan.duration})` : '';
+
+      fullMessage = `${operationName}${duration}${attributeInfo}`;
+    }
+    // Handle original log format
+    else if (log.jsonPayload?.fields) {
+      const message = log.jsonPayload.fields.message || '';
+      const chain = log.jsonPayload.fields.chain ? `[${log.jsonPayload.fields.chain}] ` : '';
+      fullMessage = `${chain}${message}`;
+    }
+    // Fallback to unified message field or rawText
+    else {
+      fullMessage = log.message || log.rawText || 'No message';
+    }
+
+    const truncatedMessage = LogTreeItem.truncateMessage(fullMessage);
     super(truncatedMessage, vscode.TreeItemCollapsibleState.None);
 
     // Generate a unique ID by combining available identifiers with a counter
