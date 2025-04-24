@@ -630,17 +630,8 @@ export class LogExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
 
     // First try using Claude's analysis if available
     if (analysis?.staticSearchString) {
-      searchResult = await findCodeLocation(
-        { ...log, message: analysis.staticSearchString },
-        repoPath
-      );
+      searchResult = await findCodeLocation(analysis.staticSearchString);
     }
-    
-    // Then try with the regular message from the log
-    if (!searchResult) {
-      searchResult = await findCodeLocation(log, repoPath);
-    }
-    
     // Last resort: try to find files based on the service/target name
     if (!searchResult) {
       const serviceName = log.target || log.serviceName || '';
@@ -683,6 +674,10 @@ export class LogExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
         line: searchResult.line,
         lastUpdated: new Date().toISOString()
       };
+    }
+
+    if (!searchResult) {
+      throw new Error('No search result found');
     }
 
     return searchResult;

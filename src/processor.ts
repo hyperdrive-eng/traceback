@@ -237,7 +237,6 @@ export class JsonLogParser implements LogParser {
   }
 }
 
-
 /**
  * Parser for plaintext logs with common formats
  */
@@ -291,7 +290,7 @@ export class PlainTextLogParser implements LogParser {
       extract: (matches: RegExpExecArray) => {
         const fields = matches[3]?.trim();
         const fieldMap: Record<string, string> = {};
-        
+
         // Extract key=value pairs, handling quoted values
         const fieldRegex = /([^=\s]+)=(?:"([^"]*)"|([^\s]*))/g;
         let fieldMatch;
@@ -300,7 +299,7 @@ export class PlainTextLogParser implements LogParser {
           const value = fieldMatch[2] || fieldMatch[3]; // quoted or unquoted value
           fieldMap[key] = value;
         }
-        
+
         return {
           timestamp: matches[1]?.trim(),
           severity: matches[2]?.trim().toUpperCase(),
@@ -363,7 +362,7 @@ export class PlainTextLogParser implements LogParser {
     if (!line.trim()) {
       return { matched: false, data: {} };
     }
-    
+
     // Try all registered patterns
     for (const pattern of this.patterns) {
       const matches = pattern.regex.exec(line);
@@ -374,26 +373,26 @@ export class PlainTextLogParser implements LogParser {
         };
       }
     }
-    
+
     // If no pattern matched, perform basic heuristic extraction
     try {
       // Try to extract timestamp and severity using common patterns
       const timestampMatch = line.match(/^(\d{4}-\d{2}-\d{2}[T\s]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[-+]\d{4})?)/);
       const timestamp = timestampMatch ? timestampMatch[1] : null;
-      
+
       const severityMatch = line.match(/\b(TRACE|DEBUG|INFO|WARN(?:ING)?|ERROR|FATAL|CRITICAL)\b/i);
       const severity = severityMatch ? severityMatch[0].toUpperCase() : null;
-      
+
       // Try to identify a service name or module
-      const remainingText = timestampMatch && severityMatch 
+      const remainingText = timestampMatch && severityMatch
         ? line.replace(timestampMatch[0], '').replace(severityMatch[0], '').trim()
         : line.trim();
-      
+
       // Look for module/service pattern with colon
       const moduleMatch = remainingText.match(/^([a-zA-Z0-9_.:]+):(.+)$/);
       const serviceName = moduleMatch ? moduleMatch[1].trim() : '';
       const message = moduleMatch ? moduleMatch[2].trim() : remainingText;
-      
+
       // If we found at least a timestamp or severity, consider it a match
       if (timestamp || severity) {
         return {
@@ -416,7 +415,7 @@ export class PlainTextLogParser implements LogParser {
   private createLogEntry(data: any, rawLine: string): LogEntry {
     // Determine severity - first use data.severity if present, then detect from content
     let severity = data.severity || '';
-    
+
     // If severity not provided by pattern, try to detect from line content
     if (!severity) {
       if (rawLine.toLowerCase().includes('error') || rawLine.toLowerCase().includes('exception')) {
@@ -433,7 +432,7 @@ export class PlainTextLogParser implements LogParser {
         severity = 'INFO'; // Default to INFO if we can't detect
       }
     }
-    
+
     // Normalize severity to standard values
     severity = this.normalizeSeverity(severity);
 
@@ -477,13 +476,13 @@ export class PlainTextLogParser implements LogParser {
       serviceName: serviceName || ''
     };
   }
-  
+
   /**
    * Normalize severity level to standard values
    */
   private normalizeSeverity(severity: string): string {
     const upperSeverity = severity.toUpperCase();
-    
+
     // Map to standard severity levels
     if (upperSeverity.includes('TRACE')) {
       return 'TRACE';
@@ -496,7 +495,7 @@ export class PlainTextLogParser implements LogParser {
     } else if (upperSeverity.includes('ERROR') || upperSeverity.includes('FATAL') || upperSeverity.includes('CRIT')) {
       return 'ERROR';
     }
-    
+
     // Default to INFO if no match
     return 'INFO';
   }
@@ -526,7 +525,7 @@ export class RegexLogParser implements LogParser {
   async parse(content: string): Promise<LogEntry[]> {
     // Split content into lines
     const lines = content.split('\n').filter(line => line.trim().length > 0);
-    
+
     // If we have no patterns yet, collect sample logs
     if (this.patterns.length === 0 && !this.hasGeneratedPatterns) {
       // Add new samples to our collection, up to the maximum
@@ -540,13 +539,13 @@ export class RegexLogParser implements LogParser {
           break;
         }
       }
-      
+
       // If we have enough samples or this is a large log set, generate patterns
       if (this.sampleLogs.length >= this.maxSampleLogs || lines.length > 50) {
         await this.generatePatterns();
       }
     }
-    
+
     // If we're still missing patterns, generate them now
     if (this.patterns.length === 0) {
       // If we don't have enough samples, use what we've got
@@ -554,14 +553,14 @@ export class RegexLogParser implements LogParser {
         // Take a sample from the current logs
         this.sampleLogs = lines.slice(0, this.maxSampleLogs);
       }
-      
+
       await this.generatePatterns();
     }
-    
+
     // Now we should have patterns - parse the logs
     return this.parseWithPatterns(lines);
   }
-  
+
   /**
    * Use Claude to generate regex patterns based on sample logs
    */
@@ -573,17 +572,17 @@ export class RegexLogParser implements LogParser {
         this.hasGeneratedPatterns = true; // Mark as tried
         return;
       }
-      
+
       console.log(`Generating regex patterns from ${this.sampleLogs.length} sample logs...`);
-      
+
       // Call Claude to generate patterns
       this.patterns = await this.claudeService.generateLogParsingRegex(this.sampleLogs);
-      
+
       console.log(`Generated ${this.patterns.length} regex patterns`);
-      
+
       // Mark that we've generated patterns to avoid repeatedly trying if it fails
       this.hasGeneratedPatterns = true;
-      
+
       // Compile all the patterns for efficiency
       this.patterns.forEach(pattern => {
         try {
@@ -599,34 +598,34 @@ export class RegexLogParser implements LogParser {
       this.hasGeneratedPatterns = true; // Mark as tried to avoid retry spam
     }
   }
-  
+
   /**
    * Parse all logs using the generated patterns
    */
   private async parseWithPatterns(lines: string[]): Promise<LogEntry[]> {
     const logs: LogEntry[] = [];
-    
+
     for (const line of lines) {
       if (!line.trim()) continue;
-      
+
       // Try each pattern in order until one matches
       let matched = false;
-      
+
       for (const patternObj of this.patterns) {
         try {
           const regex = new RegExp(patternObj.pattern);
           const match = regex.exec(line);
-          
+
           if (match) {
             // Extract fields based on the pattern's extraction map
             const extractedData: Record<string, string> = {};
-            
+
             for (const [logEntryField, captureGroupName] of Object.entries(patternObj.extractionMap)) {
               if (match.groups && match.groups[captureGroupName]) {
                 extractedData[logEntryField] = match.groups[captureGroupName];
               }
             }
-            
+
             // Create LogEntry from extracted data
             logs.push(this.createLogEntry(extractedData, line));
             matched = true;
@@ -637,24 +636,24 @@ export class RegexLogParser implements LogParser {
           continue;
         }
       }
-      
+
       // If no pattern matched, fall back to heuristic parsing
       if (!matched) {
         // Try to extract basic fields using heuristics
         logs.push(this.createFallbackLogEntry(line));
       }
     }
-    
+
     return logs;
   }
-  
+
   /**
    * Create a LogEntry from the extracted fields
    */
   private createLogEntry(data: Record<string, string>, rawLine: string): LogEntry {
     // Ensure required fields have sensible defaults
     const severity = this.normalizeSeverity(data.severity || '');
-    
+
     // Process timestamp
     let timestamp = data.timestamp || new Date().toISOString();
     if (data.timestamp) {
@@ -666,12 +665,12 @@ export class RegexLogParser implements LogParser {
         timestamp = new Date().toISOString(); // Use current time as fallback
       }
     }
-    
+
     // Ensure other fields are defined
     const serviceName = data.serviceName || data.target || '';
     const message = data.message || rawLine;
     const target = serviceName || 'unknown';
-    
+
     // Extract variables if they exist
     const variables: Record<string, string> = {};
     Object.entries(data).forEach(([key, value]) => {
@@ -681,7 +680,7 @@ export class RegexLogParser implements LogParser {
         variables[varName] = value;
       }
     });
-    
+
     return {
       severity,
       timestamp,
@@ -698,13 +697,13 @@ export class RegexLogParser implements LogParser {
       }
     };
   }
-  
+
   /**
    * Create a basic LogEntry when no pattern matches
    */
   private createFallbackLogEntry(rawLine: string): LogEntry {
     let severity = 'INFO';
-    
+
     // Try to detect severity from content
     if (rawLine.toLowerCase().includes('error') || rawLine.toLowerCase().includes('exception')) {
       severity = 'ERROR';
@@ -715,18 +714,18 @@ export class RegexLogParser implements LogParser {
     } else if (rawLine.toLowerCase().includes('info')) {
       severity = 'INFO';
     }
-    
+
     // Try to extract service name if there's a pipe separator
     let serviceName = 'unknown';
     let message = rawLine;
-    
+
     // Common format: service | message
     const pipeMatch = rawLine.match(/^([^|]+)\|\s*(.+)$/);
     if (pipeMatch) {
       serviceName = pipeMatch[1].trim();
       message = pipeMatch[2].trim();
     }
-    
+
     return {
       severity,
       timestamp: new Date().toISOString(),
@@ -742,13 +741,13 @@ export class RegexLogParser implements LogParser {
       }
     };
   }
-  
+
   /**
    * Normalize severity levels to standard values
    */
   private normalizeSeverity(severity: string): string {
     const upperSeverity = severity.toUpperCase();
-    
+
     if (upperSeverity.includes('TRACE')) {
       return 'TRACE';
     } else if (upperSeverity.includes('DEBUG')) {
@@ -760,7 +759,7 @@ export class RegexLogParser implements LogParser {
     } else if (upperSeverity.includes('ERROR') || upperSeverity.includes('FATAL') || upperSeverity.includes('CRIT')) {
       return 'ERROR';
     }
-    
+
     // Default to INFO if no match
     return 'INFO';
   }
@@ -794,10 +793,10 @@ export class ExtensibleLogParser implements LogParser {
       console.warn('Empty or invalid log content provided');
       return [];
     }
-    
+
     // Detect content format by examining the first few lines
     const sampleLines = content.split('\n').slice(0, 10).filter(line => line.trim().length > 0);
-    
+
     // Try each parser in order
     for (const parser of this.plugins) {
       if (parser.canParse(content)) {
@@ -815,17 +814,17 @@ export class ExtensibleLogParser implements LogParser {
     // If no dedicated parser handled it, try a fallback approach
     // This is useful for new log formats that don't match any existing pattern
     console.warn('No dedicated parser matched, attempting fallback parsing');
-    
+
     // Create a fallback parser that tries to handle line-by-line
     const fallbackParser = new PlainTextLogParser();
     const fallbackResult = await fallbackParser.parse(content);
-    
+
     // If we got any valid logs from fallback parsing, return them
     if (fallbackResult && fallbackResult.length > 0) {
       console.log(`Log parsed with fallback parser, found ${fallbackResult.length} entries`);
       return fallbackResult;
     }
-    
+
     // If still no results, return empty array
     console.warn('No suitable parser found for the log content');
     return [];
@@ -922,7 +921,7 @@ export async function loadLogs(logPathOrUrl: string): Promise<LogEntry[]> {
  * Find the code location based on log information
  * This function has been simplified to better handle arbitrary log formats
  */
-export async function findCodeLocation(log: LogEntry, repoPath: string): Promise<{ file: string; line: number }> {
+export async function findCodeLocation(query: string): Promise<{ file: string; line: number }> {
   try {
     // Progress indicator
     const result = await vscode.window.withProgress({
@@ -931,39 +930,29 @@ export async function findCodeLocation(log: LogEntry, repoPath: string): Promise
       cancellable: false
     }, async (progress) => {
       // Extract searchable content from the log, prioritizing normalized fields
-      let searchContent: string = log.message || '';
+      
+      // Clean up search content before searching
+      // Remove log level indicators like [INFO], [DEBUG], etc.
+      query = query.replace(/\[\s*(INFO|DEBUG|WARN|WARNING|ERROR|TRACE)\s*\]\s*/gi, '');
 
-      // If we still couldn't find anything searchable, we can't locate the source
-      if (!searchContent || searchContent.trim().length < 3) {
-        console.warn('No searchable content found in log entry');
-        throw new Error('No searchable content found in log entry');
-      }
-      
+      // Remove timestamps and date patterns
+      query = query.replace(/\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}(\.\d+)?(\s*[+-]\d{4})?\s*/, '');
+      query = query.replace(/\d{2}:\d{2}:\d{2}(\.\d+)?\s*/, '');
+
+      // Remove special characters (quotes, brackets, parentheses, etc.)
+      query = query.replace(/['"[\](){}<>]/g, '');
+      // Remove other special characters but keep spaces and alphanumeric
+      query = query.replace(/[^a-zA-Z0-9\s]/g, ' ');
+      // Replace multiple spaces with a single space
+      query = query.replace(/\s+/g, ' ');
+
       // Trim whitespace from resulting search content
-      const query = searchContent.trim();
-      
+      query = query.trim();
+
       // Verify we still have searchable content after cleaning
       if (!query || query.trim().length < 3) {
         console.warn('No searchable content left after cleaning log patterns');
         throw new Error('No searchable content found after cleaning log patterns');
-      }
-
-      // Extract target path hints from the log
-      // Start with the unified target/serviceName fields
-      let targetPath = log.target || log.serviceName || '';
-
-      // If no target found, try format-specific fields
-      if (!targetPath) {
-        if (log.axiomSpan) {
-          // Check for source code attributes
-          targetPath = log.axiomSpan['attributes.code.filepath'] ||
-                       log.axiomSpan['code.filepath'] ||
-                       log.axiomSpan['attributes.code.namespace'] ||
-                       log.axiomSpan['code.namespace'] || '';
-        }
-        else if (log.jsonPayload?.target) {
-          targetPath = log.jsonPayload.target;
-        }
       }
 
       progress.report({ message: 'Searching for matching source files...' });
@@ -973,24 +962,23 @@ export async function findCodeLocation(log: LogEntry, repoPath: string): Promise
       if (!workspaceFolders || workspaceFolders.length === 0) {
         throw new Error('No workspace folder is open');
       }
-      
+
       // Use the first workspace folder as the root
       const workspaceRoot = workspaceFolders[0].uri.fsPath;
-      
-      
+
       // Function to search a file for the query
       async function searchFile(filePath: string, query: string): Promise<{ line: number } | null> {
         try {
           const content = fs.readFileSync(filePath, 'utf8');
-          
+
           // First check if the file contains the query at all before line-by-line processing
           if (!content.includes(query)) {
             return null;
           }
-          
+
           // Only if the file contains the query, proceed with line-by-line search
           const lines = content.split('\n');
-          
+
           for (let i = 0; i < lines.length; i++) {
             const line = lines[i];
             if (line.toLowerCase().includes(query.toLowerCase())) {
@@ -1003,48 +991,37 @@ export async function findCodeLocation(log: LogEntry, repoPath: string): Promise
           return null;
         }
       }
-      
+
       // Find all applicable source files
       progress.report({ message: 'Finding source files...' });
       let filesToSearch = await vscode.workspace.findFiles(
         '**/*.{ts,tsx,js,jsx,vue,svelte,rs,go,py,java,cs,cpp,c,h,rb,php}',
         '**/[node_modules,dist,build,.git,logs]/**'
       );
-      
-      // If we have a target path, prioritize matching files
-      if (targetPath) {
-        const targetLower = targetPath.toLowerCase();
-        filesToSearch.sort((a, b) => {
-          const aContains = a.fsPath.toLowerCase().includes(targetLower) ? -1 : 0;
-          const bContains = b.fsPath.toLowerCase().includes(targetLower) ? -1 : 0;
-          return aContains - bContains;
-        });
-      }
-      
+
       // Remove the file limit to search the entire codebase
       console.log(`Searching all ${filesToSearch.length} files in the codebase`);
-      
+
       // Search through the files
       let searchCount = 0;
-      
-      
+
       progress.report({ message: `Searching for "${query}" (processed ${searchCount} files)` });
-      
+
       // Progress files in batches for better responsiveness
       const BATCH_SIZE = 50;
-      
+
       // Function to search all files with a given query
       async function searchAllFiles(searchQuery: string): Promise<{file: string; line: number} | null> {
         for (let i = 0; i < filesToSearch.length; i += BATCH_SIZE) {
           const batch = filesToSearch.map(file => file.fsPath).slice(i, i + BATCH_SIZE);
-          
+
           // Search files in parallel
           const batchPromises = batch.map(async (file) => {
             searchCount++;
             if (searchCount % 100 === 0) {
               progress.report({ message: `Searching for "${searchQuery}" (processed ${searchCount} files)` });
             }
-            
+
             const match = await searchFile(file, searchQuery);
             if (match) {
               const relativePath = path.relative(workspaceRoot, file);
@@ -1052,50 +1029,50 @@ export async function findCodeLocation(log: LogEntry, repoPath: string): Promise
             }
             return null;
           });
-          
+
           const batchResults = await Promise.all(batchPromises);
           const validMatches = batchResults.filter(m => m !== null) as Array<{ file: string; line: number }>;
-          
+
           if (validMatches.length > 0) {
             return validMatches[0];
           }
         }
-        
+
         return null; // No matches found
       }
-      
+
       // First, try with the exact query
       progress.report({ message: `Searching for exact match: "${query}"` });
       const exactMatch = await searchAllFiles(query);
-      
+
       if (exactMatch) {
         return exactMatch;
       }
-      
+
       // If exact match failed, try with variations
       const words = query.split(/\s+/).filter(w => w.length > 0);
-      
+
       // Only try variations if we have multiple words
       if (words.length > 4) {
         progress.report({ message: `No exact match found, trying variations...` });
-        
+
         // Generate variations by removing words from front and back
         const variations: string[] = [];
-        
+
         // Remove words from the front (1, 2, 3, etc.)
         for (let i = 1; i < words.length; i++) {
           const frontVariation = words.slice(i).join(' ');
           if (frontVariation.length >= 3) {
             variations.push(frontVariation);
           }
-          
+
           // Remove words from the back (1, 2, 3, etc.)
           const backVariation = words.slice(0, words.length - i).join(' ');
           if (backVariation.length >= 3) {
             variations.push(backVariation);
           }
         }
-        
+
         // Try each variation until we find a match
         for (const variation of variations) {
           progress.report({ message: `Trying variation: "${variation}"` });
@@ -1105,7 +1082,7 @@ export async function findCodeLocation(log: LogEntry, repoPath: string): Promise
           }
         }
       }
-      
+
       return null; // No matches found with any variation
     });
 
