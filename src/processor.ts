@@ -197,43 +197,65 @@ export interface LogParser {
 export class JsonLogParser implements LogParser {
   canParse(content: string): boolean {
     try {
-      // Try parsing the first non-empty line
-      const lines = content.split('\n')
-        .map(line => line.trim())
-        .filter(line => line.length > 0);
-      
-      if (lines.length > 0) {
-        JSON.parse(lines[0]);
-        return true;
-      }
-      return false;
+      // First try parsing the entire content
+      JSON.parse(content);
+      return true;
     } catch (error) {
+      // If that fails, try the first non-empty line
+      try {
+        const lines = content.split('\n')
+          .map(line => line.trim())
+          .filter(line => line.length > 0);
+        
+        if (lines.length > 0) {
+          JSON.parse(lines[0]);
+          return true;
+        }
+      } catch (error) {
+        // If both attempts fail, we can't parse this
+        return false;
+      }
       return false;
     }
   }
 
   async parse(content: string): Promise<LogEntry[]> {
-    const logs: LogEntry[] = [];
-    const lines = content.split('\n')
-      .map(line => line.trim())
-      .filter(line => line.length > 0);
-
-    for (const line of lines) {
-      try {
-        const parsed = JSON.parse(line);
-        if (Array.isArray(parsed)) {
-          // If a line contains an array, process each item
-          logs.push(...parsed.map((log: any) => this.normalizeLogEntry(log)));
-        } else {
-          // Single log entry
-          logs.push(this.normalizeLogEntry(parsed));
-        }
-      } catch (error) {
-        console.debug('Skipping invalid JSON line:', error);
+    try {
+      // First try parsing the entire content as a single JSON
+      const parsed = JSON.parse(content);
+      if (Array.isArray(parsed)) {
+        // Content is an array of logs
+        return parsed.map(log => this.normalizeLogEntry(log));
+      } else {
+        // Content is a single log entry
+        return [this.normalizeLogEntry(parsed)];
       }
-    }
+    } catch (error) {
+      console.debug('Failed to parse entire content as JSON, trying line-by-line');
+      
+      // Fall back to line-by-line parsing
+      const logs: LogEntry[] = [];
+      const lines = content.split('\n')
+        .map(line => line.trim())
+        .filter(line => line.length > 0);
 
-    return logs;
+      for (const line of lines) {
+        try {
+          const parsed = JSON.parse(line);
+          if (Array.isArray(parsed)) {
+            // If a line contains an array, process each item
+            logs.push(...parsed.map(log => this.normalizeLogEntry(log)));
+          } else {
+            // Single log entry
+            logs.push(this.normalizeLogEntry(parsed));
+          }
+        } catch (error) {
+          console.debug('Skipping invalid JSON line:', error);
+        }
+      }
+
+      return logs;
+    }
   }
 
   private normalizeLogEntry(log: any): LogEntry {
@@ -251,7 +273,6 @@ export class JsonLogParser implements LogParser {
     return normalizedLog;
   }
 }
-
 
 /**
  * Parser for plaintext logs with common formats
