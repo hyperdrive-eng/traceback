@@ -291,103 +291,6 @@ export class VariableDecorator {
   }
 
   /**
-   * Search for a variable in the current editor
-   * Uses heuristic-based scoring
-   */
-  private async findVariableInEditor(
-    editor: vscode.TextEditor,
-    variableName: string,
-    variableValue: string
-  ): Promise<{ 
-    primaryRange: vscode.Range; 
-    allRanges: vscode.Range[];
-  } | undefined> {
-    const document = editor.document;
-    const text = document.getText();
-    
-    // Collect all variable occurrences
-    const allRanges: vscode.Range[] = [];
-    const regexPattern = new RegExp(`\\b${variableName}\\b`, 'g');
-    let match;
-    
-    // First pass: collect all instances
-    while ((match = regexPattern.exec(text)) !== null) {
-      const pos = document.positionAt(match.index);
-      const line = document.lineAt(pos.line);
-      const lineText = line.text;
-      
-      // Find the start and end of the variable name
-      const startChar = lineText.indexOf(variableName, pos.character - pos.line);
-      if (startChar === -1) continue;
-      
-      const endChar = startChar + variableName.length;
-      const range = new vscode.Range(pos.line, startChar, pos.line, endChar);
-      
-      // Store this match
-      allRanges.push(range);
-    }
-    
-    if (allRanges.length === 0) {
-      return undefined;
-    }
-
-    // Fallback to heuristic scoring
-    const repoPath = this.context.globalState.get<string>('repoPath') || '';
-    const relevanceScores = await Promise.all(allRanges.map(async range => {
-      let score = 0;
-      const lineNum = range.start.line;
-      const lineText = document.lineAt(lineNum).text;
-      
-      // 1. Proximity to the log line
-      if (this.currentLog) {
-        const searchResult = await findCodeLocation(this.currentLog, repoPath);
-        const activeLogLine = searchResult ? searchResult.line : -1;
-        
-        if (activeLogLine >= 0) {
-          const distance = Math.abs(lineNum - activeLogLine);
-          score += Math.max(0, 50 - distance * 2);
-        }
-      }
-      
-      // 2. Assignment patterns
-      if (lineText.match(new RegExp(`\\b${variableName}\\s*=`))) {
-        score += 40;
-      }
-      
-      // 3. Declaration patterns
-      if (lineText.match(new RegExp(`(let|const|var|fn|function|def|int|float|double|string|bool)\\s+${variableName}`))) {
-        score += 30;
-      }
-      
-      // 4. Function arguments
-      if (lineText.match(new RegExp(`\\(.*\\b${variableName}\\b.*\\)`))) {
-        score += 20;
-      }
-      
-      // 5. Return statements
-      if (lineText.match(new RegExp(`return.*\\b${variableName}\\b`))) {
-        score += 35;
-      }
-      
-      // 6. Conditional statements
-      if (lineText.match(new RegExp(`if.*\\b${variableName}\\b|\\b${variableName}\\b.*[=!><]`))) {
-        score += 25;
-      }
-      
-      return { range, score };
-    }));
-    
-    // Sort by relevance score (highest first)
-    relevanceScores.sort((a, b) => b.score - a.score);
-    
-    // Return all relevant ranges and the primary (most relevant) one
-    return {
-      primaryRange: relevanceScores[0].range,
-      allRanges
-    };
-  }
-
-  /**
    * Search for a variable in the project
    */
   private async findVariableInProject(
@@ -450,7 +353,7 @@ export class VariableDecorator {
         // If we found matches, calculate relevance scores
         if (matches.length > 0) {
           // Get log line number if available
-          const searchResult = await findCodeLocation(log, repoPath);
+          const searchResult = await findCodeLocation(log.claudeAnalysis?.staticSearchString || log.message || log.rawText || '');
           const logLineNumber = searchResult ? searchResult.line : -1;
           
           // Calculate scores for each match
