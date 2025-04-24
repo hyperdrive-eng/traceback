@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import fetch from 'node-fetch';
+import Anthropic from '@anthropic-ai/sdk';
 
 export interface LLMLogAnalysis {
     staticSearchString: string;
@@ -35,6 +36,7 @@ export class ClaudeService {
     private static instance: ClaudeService;
     private apiKey: string | undefined;
     private apiEndpoint: string = 'https://api.anthropic.com/v1/messages';
+    private anthropic: Anthropic | undefined;
 
     // Use a single model for all tasks since we're using the same one
     private model: string = 'claude-3-7-sonnet-20250219';
@@ -42,9 +44,12 @@ export class ClaudeService {
     private haikuModel: string = 'claude-3-haiku-20240307';
 
     private constructor() {
-        // Load API key from workspace state if available
-        const config = vscode.workspace.getConfiguration('traceback');
-        this.apiKey = config.get('claudeApiKey');
+        this.apiKey = vscode.workspace.getConfiguration('traceback').get<string>('claudeApiKey');
+        if (this.apiKey) {
+            this.anthropic = new Anthropic({
+                apiKey: this.apiKey
+            });
+        }
     }
 
     public static getInstance(): ClaudeService {
@@ -54,23 +59,19 @@ export class ClaudeService {
         return ClaudeService.instance;
     }
 
-    public async setApiKey(key: string): Promise<void> {
-        this.apiKey = key;
-        await vscode.workspace.getConfiguration('traceback').update('claudeApiKey', key, true);
+    public async setApiKey(apiKey: string): Promise<void> {
+        this.apiKey = apiKey;
+        this.anthropic = new Anthropic({
+            apiKey: apiKey
+        });
+        await vscode.workspace.getConfiguration('traceback').update('claudeApiKey', apiKey, true);
     }
 
-    public async analyzeLog(logMessage: string, language: string): Promise<LLMLogAnalysis> {
-        if (!this.apiKey) {
-            throw new Error('Claude API key not set. Please set your API key first.');
+    public async analyzeLog(logMessage: string, language: string = 'unknown'): Promise<LLMLogAnalysis> {
+        if (!this.apiKey || !this.anthropic) {
+            throw new Error('Claude API key not set. Please set it in settings.');
         }
-
-        try {
-            const response = await this.callClaude(logMessage, language);
-            return response;
-        } catch (error) {
-            console.error('Error calling Claude API:', error);
-            throw new Error('Failed to analyze log message with Claude');
-        }
+        return this.analyzeLogWithClaude(logMessage, language);
     }
 
     public async analyzeCallers(
@@ -119,7 +120,11 @@ export class ClaudeService {
         }
     }
 
-    private async callClaude(logMessage: string, language: string): Promise<LLMLogAnalysis> {
+    private async analyzeLogWithClaude(logMessage: string, language: string): Promise<LLMLogAnalysis> {
+        if (!this.anthropic) {
+            throw new Error('Claude API client not initialized. Please set your API key first.');
+        }
+
         const tools = [{
             name: "analyze_log",
             description: "Analyze a log message to extract static search string and variables",
@@ -153,6 +158,7 @@ Rules for static search string:
 - Predicted staticSearchString should be exact substring of logMessage. 
 - logMessage.substring(staticSearchString) should be true.
 - No regular expressions allowed.
+- Consider ${language} logging patterns.
 
 Rules for variables:
 - Extract all key-value pairs and dynamic values
@@ -167,7 +173,8 @@ Variables: {
 }`
             }],
             model: this.model,
-            max_tokens: 500,
+            max_tokens: 1000,
+            temperature: 0,
             tools: tools,
             tool_choice: {
                 type: "tool",
@@ -211,46 +218,15 @@ Variables: {
 
             const toolOutput = responseData.content[0].input;
 
-            // Validate required fields are present
-            if (!Object.prototype.hasOwnProperty.call(toolOutput, 'staticSearchString')) {
-                console.warn('Claude response missing staticSearchString, using empty string');
-                toolOutput.staticSearchString = '';
-            }
-
-            if (!Object.prototype.hasOwnProperty.call(toolOutput, 'variables')) {
-                console.warn('Claude response missing variables, using empty object');
-                toolOutput.variables = {};
-            }
-
-            // Ensure types are correct
-            if (typeof toolOutput.staticSearchString !== 'string') {
-                console.warn('Claude response staticSearchString is not a string, converting');
-                toolOutput.staticSearchString = String(toolOutput.staticSearchString || '');
-            }
-
-            if (typeof toolOutput.variables !== 'object' || toolOutput.variables === null) {
-                console.warn('Claude response variables is not an object, using empty object');
-                toolOutput.variables = {};
-            }
-
             // Clean up the static search string by removing log level indicators
-            // This helps with matching source code that doesn't include these markers
             if (toolOutput.staticSearchString) {
                 const logLevelPattern = /\[\s*(INFO|DEBUG|WARN|WARNING|ERROR|TRACE)\s*\]\s*/gi;
-                // Store the original search string for debugging
-                const originalSearchString = toolOutput.staticSearchString;
-                // Remove log level indicators
                 toolOutput.staticSearchString = toolOutput.staticSearchString.replace(logLevelPattern, '');
-
-                // Log the change if we modified the search string
-                if (originalSearchString !== toolOutput.staticSearchString) {
-                    console.log(`Cleaned log level indicators from search string: "${originalSearchString}" → "${toolOutput.staticSearchString}"`);
-                }
             }
 
             return toolOutput as LLMLogAnalysis;
         } catch (error) {
-            console.error('Error calling Claude API:', error);
+            console.error('Error analyzing log with Claude:', error);
             throw error;
         }
     }
@@ -433,6 +409,14 @@ Use the analyze_callers function to return the results in the exact format requi
                                             type: "string",
                                             description: "Capture group name for service name"
                                         },
+                                        fileName: {
+                                            type: "string",
+                                            description: "Capture group name for source file name"
+                                        },
+                                        lineNumber: {
+                                            type: "string",
+                                            description: "Capture group name for source line number"
+                                        }
                                     },
                                     additionalProperties: true
                                 }
@@ -452,6 +436,15 @@ Use the analyze_callers function to return the results in the exact format requi
 3. Variables - values shown in the log (e.g., "user_id=123") - if present
 4. Timestamp - in any format - if present
 5. Service name or component - if present
+6. File name - source file where the log originated - if present
+7. Line number - source line number in the file - if present
+
+Pay special attention to file names and line numbers which might appear in formats like:
+- at fileName:lineNumber
+- in fileName line lineNumber
+- fileName(lineNumber)
+- [fileName:lineNumber]
+- fileName.ext:lineNumber
 
 Log samples:
 ${selectedSamples.map((sample, i) => `${i+1}. ${sample}`).join('\n')}`;
@@ -482,7 +475,15 @@ The pattern should be comprehensive enough to extract:
 - timestamp: The timestamp in any format, if present
 - message: The main log message content
 - serviceName: The name of the service or component generating the log
+- fileName: The source file name if present (with or without extension)
+- lineNumber: The line number in the source file if present
 - Any other relevant fields
+
+For file names and line numbers, ensure the patterns can handle:
+- Various delimiters between file name and line number (:, line, at line, etc.)
+- File names with or without extensions
+- File paths (partial or full)
+- Line numbers in different formats (parentheses, brackets, after "line", etc.)
 
 Ensure the regex patterns:
 - Are compatible with JavaScript's regular expression engine

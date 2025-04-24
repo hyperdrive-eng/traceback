@@ -7,6 +7,7 @@ import {
   clearDecorations 
 } from './decorations';
 import { findCodeLocation } from './processor';
+import { VectorStore } from './vectorSearch';
 
 /**
  * Class to handle decorating variables in the editor with their values
@@ -291,103 +292,6 @@ export class VariableDecorator {
   }
 
   /**
-   * Search for a variable in the current editor
-   * Uses heuristic-based scoring
-   */
-  private async findVariableInEditor(
-    editor: vscode.TextEditor,
-    variableName: string,
-    variableValue: string
-  ): Promise<{ 
-    primaryRange: vscode.Range; 
-    allRanges: vscode.Range[];
-  } | undefined> {
-    const document = editor.document;
-    const text = document.getText();
-    
-    // Collect all variable occurrences
-    const allRanges: vscode.Range[] = [];
-    const regexPattern = new RegExp(`\\b${variableName}\\b`, 'g');
-    let match;
-    
-    // First pass: collect all instances
-    while ((match = regexPattern.exec(text)) !== null) {
-      const pos = document.positionAt(match.index);
-      const line = document.lineAt(pos.line);
-      const lineText = line.text;
-      
-      // Find the start and end of the variable name
-      const startChar = lineText.indexOf(variableName, pos.character - pos.line);
-      if (startChar === -1) continue;
-      
-      const endChar = startChar + variableName.length;
-      const range = new vscode.Range(pos.line, startChar, pos.line, endChar);
-      
-      // Store this match
-      allRanges.push(range);
-    }
-    
-    if (allRanges.length === 0) {
-      return undefined;
-    }
-
-    // Fallback to heuristic scoring
-    const repoPath = this.context.globalState.get<string>('repoPath') || '';
-    const relevanceScores = await Promise.all(allRanges.map(async range => {
-      let score = 0;
-      const lineNum = range.start.line;
-      const lineText = document.lineAt(lineNum).text;
-      
-      // 1. Proximity to the log line
-      if (this.currentLog) {
-        const searchResult = await findCodeLocation(this.currentLog, repoPath);
-        const activeLogLine = searchResult ? searchResult.line : -1;
-        
-        if (activeLogLine >= 0) {
-          const distance = Math.abs(lineNum - activeLogLine);
-          score += Math.max(0, 50 - distance * 2);
-        }
-      }
-      
-      // 2. Assignment patterns
-      if (lineText.match(new RegExp(`\\b${variableName}\\s*=`))) {
-        score += 40;
-      }
-      
-      // 3. Declaration patterns
-      if (lineText.match(new RegExp(`(let|const|var|fn|function|def|int|float|double|string|bool)\\s+${variableName}`))) {
-        score += 30;
-      }
-      
-      // 4. Function arguments
-      if (lineText.match(new RegExp(`\\(.*\\b${variableName}\\b.*\\)`))) {
-        score += 20;
-      }
-      
-      // 5. Return statements
-      if (lineText.match(new RegExp(`return.*\\b${variableName}\\b`))) {
-        score += 35;
-      }
-      
-      // 6. Conditional statements
-      if (lineText.match(new RegExp(`if.*\\b${variableName}\\b|\\b${variableName}\\b.*[=!><]`))) {
-        score += 25;
-      }
-      
-      return { range, score };
-    }));
-    
-    // Sort by relevance score (highest first)
-    relevanceScores.sort((a, b) => b.score - a.score);
-    
-    // Return all relevant ranges and the primary (most relevant) one
-    return {
-      primaryRange: relevanceScores[0].range,
-      allRanges
-    };
-  }
-
-  /**
    * Search for a variable in the project
    */
   private async findVariableInProject(
@@ -402,128 +306,104 @@ export class VariableDecorator {
     allMatches?: Array<{ line: number; startChar: number; endChar: number }>;
   } | undefined> {
     try {
-      // If we have a target, prioritize files that match the target path
-      let targetPath = '';
-      if (log.jsonPayload.target) {
-        targetPath = log.jsonPayload.target.replace(/::/g, '/');
+      // Initialize vector store if needed
+      const vectorStore = VectorStore.getInstance();
+      await vectorStore.indexWorkspace(repoPath);
+
+      // Search for the variable using vector search
+      const results = await vectorStore.search(variableName, 10);
+
+      if (results.length > 0) {
+        // Find the best match that actually contains the variable name
+        for (const result of results) {
+          const content = fs.readFileSync(result.file, 'utf8');
+          const lines = content.split('\n');
+          const line = lines[result.line];
+
+          // Find the exact position of the variable in the line
+          const startChar = line.indexOf(variableName);
+          if (startChar >= 0) {
+            // Make sure it's a proper variable reference
+            const charBefore = startChar > 0 ? line[startChar - 1] : ' ';
+            const charAfter = line[startChar + variableName.length];
+            
+            if (!/[a-zA-Z0-9_]/.test(charBefore) && (!/[a-zA-Z0-9_]/.test(charAfter) || !charAfter)) {
+              // Find all other matches in the file
+              const allMatches: Array<{ line: number; startChar: number; endChar: number }> = [];
+              
+              lines.forEach((lineText, lineNum) => {
+                let pos = 0;
+                while ((pos = lineText.indexOf(variableName, pos)) >= 0) {
+                  const before = pos > 0 ? lineText[pos - 1] : ' ';
+                  const after = lineText[pos + variableName.length];
+                  
+                  if (!/[a-zA-Z0-9_]/.test(before) && (!/[a-zA-Z0-9_]/.test(after) || !after)) {
+                    allMatches.push({
+                      line: lineNum,
+                      startChar: pos,
+                      endChar: pos + variableName.length
+                    });
+                  }
+                  pos += variableName.length;
+                }
+              });
+
+              return {
+                file: result.file,
+                line: result.line,
+                startChar,
+                endChar: startChar + variableName.length,
+                allMatches
+              };
+            }
+          }
+        }
       }
-      
-      // Just search files in the target path or commonly used source directories
-      const filePaths = await this.findRelevantFiles(repoPath, targetPath);
-      
-      // File with the highest score
-      let bestFile: string | undefined;
-      let bestMatches: Array<{ line: number; startChar: number; endChar: number; score: number }> = [];
+
+      // If vector search didn't find a good match, try the old method
+      const filePaths = await this.findRelevantFiles(repoPath, log.jsonPayload.target || '');
       
       for (const filePath of filePaths) {
         const content = fs.readFileSync(filePath, 'utf8');
         const lines = content.split('\n');
         
-        const matches: Array<{ line: number; startChar: number; endChar: number; score: number }> = [];
+        // Find all matches in this file
+        const allMatches: Array<{ line: number; startChar: number; endChar: number }> = [];
         
-        // First, collect all matches in this file
         for (let i = 0; i < lines.length; i++) {
           const line = lines[i];
-          let startIndex = 0;
-          let startChar;
+          let pos = 0;
           
-          // Find all occurrences in this line
-          while ((startChar = line.indexOf(variableName, startIndex)) !== -1) {
-            // Make sure it's a proper variable reference, not just a substring
-            const charBefore = startChar > 0 ? line[startChar - 1] : ' ';
-            const charAfter = line[startChar + variableName.length];
+          while ((pos = line.indexOf(variableName, pos)) >= 0) {
+            const before = pos > 0 ? line[pos - 1] : ' ';
+            const after = line[pos + variableName.length];
             
-            if (!/[a-zA-Z0-9_]/.test(charBefore) && (!/[a-zA-Z0-9_]/.test(charAfter) || !charAfter)) {
-              matches.push({
+            if (!/[a-zA-Z0-9_]/.test(before) && (!/[a-zA-Z0-9_]/.test(after) || !after)) {
+              allMatches.push({
                 line: i,
-                startChar,
-                endChar: startChar + variableName.length,
-                score: 0 // Will calculate scores after collecting all matches
+                startChar: pos,
+                endChar: pos + variableName.length
               });
             }
-            
-            // Move past this occurrence for the next iteration
-            startIndex = startChar + variableName.length;
+            pos += variableName.length;
           }
         }
         
-        // If we found matches, calculate relevance scores
-        if (matches.length > 0) {
-          // Get log line number if available
-          const searchResult = await findCodeLocation(log, repoPath);
-          const logLineNumber = searchResult ? searchResult.line : -1;
-          
-          // Calculate scores for each match
-          for (const match of matches) {
-            let score = 0;
-            const lineNum = match.line;
-            const lineText = lines[lineNum];
-            
-            // 1. Proximity to the log line (if we know it)
-            if (logLineNumber >= 0) {
-              const distance = Math.abs(lineNum - logLineNumber);
-              // Closer instances get higher scores, up to 50 points for being very close
-              score += Math.max(0, 50 - distance * 2);
-            }
-            
-            // 2. Assignment patterns (high value for being on the left side of assignment)
-            if (lineText.match(new RegExp(`\\b${variableName}\\s*=`))) {
-              score += 40; // Variable is being assigned to
-            }
-            
-            // 3. Declaration patterns are valuable
-            if (lineText.match(new RegExp(`(let|const|var|fn|function|def|int|float|double|string|bool)\\s+${variableName}`))) {
-              score += 30; // Variable is being declared
-            }
-            
-            // 4. Function arguments are less valuable but still important
-            if (lineText.match(new RegExp(`\\(.*\\b${variableName}\\b.*\\)`))) {
-              score += 20; // Variable is a function argument
-            }
-            
-            // 5. If it's in a return statement, it's the final value
-            if (lineText.match(new RegExp(`return.*\\b${variableName}\\b`))) {
-              score += 35; // Variable is being returned
-            }
-            
-            // 6. If it's part of a conditional, it's being used for logic
-            if (lineText.match(new RegExp(`if.*\\b${variableName}\\b|\\b${variableName}\\b.*[=!><]`))) {
-              score += 25; // Variable is in a conditional
-            }
-            
-            // Update the score
-            match.score = score;
-          }
-          
-          // Sort by score (highest first)
-          matches.sort((a, b) => b.score - a.score);
-          
-          // If this file has better matches than our current best, update
-          if (!bestFile || matches[0].score > (bestMatches[0]?.score || 0)) {
-            bestFile = filePath;
-            bestMatches = matches;
-          }
+        if (allMatches.length > 0) {
+          // Use the first match as the primary one
+          return {
+            file: filePath,
+            line: allMatches[0].line,
+            startChar: allMatches[0].startChar,
+            endChar: allMatches[0].endChar,
+            allMatches
+          };
         }
       }
-      
-      if (bestFile && bestMatches.length > 0) {
-        // Return the primary match and all matches found
-        return {
-          file: bestFile,
-          line: bestMatches[0].line,
-          startChar: bestMatches[0].startChar,
-          endChar: bestMatches[0].endChar,
-          allMatches: bestMatches.map(m => ({
-            line: m.line,
-            startChar: m.startChar,
-            endChar: m.endChar
-          }))
-        };
-      }
-      
+
       return undefined;
     } catch (error) {
-      console.error('Error in findVariableInProject:', error);
+      console.error('Error searching for variable:', error);
       return undefined;
     }
   }
