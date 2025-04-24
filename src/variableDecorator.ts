@@ -353,8 +353,11 @@ export class VariableDecorator {
         // If we found matches, calculate relevance scores
         if (matches.length > 0) {
           // Get log line number if available
-          const searchResult = await findCodeLocation(log.claudeAnalysis?.staticSearchString || log.message || log.rawText || '');
-          const logLineNumber = searchResult ? searchResult.line : -1;
+          let logLineNumber = -1;
+          if (log.claudeAnalysis?.staticSearchString) {
+            const searchResult = await findCodeLocation(log.claudeAnalysis.staticSearchString);
+            logLineNumber = searchResult ? searchResult.line : -1;
+          }
           
           // Calculate scores for each match
           for (const match of matches) {

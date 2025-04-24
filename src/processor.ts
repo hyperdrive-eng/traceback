@@ -997,18 +997,89 @@ export async function findCodeLocation(query: string): Promise<{ file: string; l
 
       // Remove special characters (quotes, brackets, parentheses, etc.)
       query = query.replace(/['"[\](){}<>]/g, '');
-      // Remove other special characters but keep spaces and alphanumeric
-      query = query.replace(/[^a-zA-Z0-9\s]/g, ' ');
-      // Replace multiple spaces with a single space
-      query = query.replace(/\s+/g, ' ');
+      // // Remove other special characters but keep spaces and alphanumeric
+      // query = query.replace(/[^a-zA-Z0-9\s]/g, ' ');
+      // // Replace multiple spaces with a single space
+      // query = query.replace(/\s+/g, ' ');
 
-      // Trim whitespace from resulting search content
+      // // Trim whitespace from resulting search content
       query = query.trim();
 
       // Verify we still have searchable content after cleaning
       if (!query || query.trim().length < 3) {
         console.warn('No searchable content left after cleaning log patterns');
         throw new Error('No searchable content found after cleaning log patterns');
+      }
+
+      // Generate search variations using word stripping strategy
+      function generateSearchVariations(query: string): string[] {
+        const words = query.split(/\s+/).filter(w => w.length > 0);
+        const variations: string[] = [query]; // Start with original query
+        
+        // Only apply stripping strategy if we have enough words
+        if (words.length >= 5) {
+          // Generate variations by interleaving front and back stripping
+          // We'll keep removing words as long as we have at least 3 words remaining
+          for (let i = 1; i <= words.length - 3; i++) {
+            // Remove i words from front
+            const frontStripped = words.slice(i).join(' ');
+            if (frontStripped.split(/\s+/).length >= 3) {
+              variations.push(frontStripped);
+            }
+            
+            // Remove i words from back
+            const backStripped = words.slice(0, words.length - i).join(' ');
+            if (backStripped.split(/\s+/).length >= 3) {
+              variations.push(backStripped);
+            }
+            
+            // If we have enough words, also try removing i words from both ends
+            if (words.length - (i * 2) >= 3) {
+              const bothStripped = words.slice(i, words.length - i).join(' ');
+              variations.push(bothStripped);
+            }
+          }
+        }
+        
+        // Remove duplicates
+        const uniqueVariations = [...new Set(variations)];
+        
+        // Reorder variations to interleave front and back stripping
+        const reorderedVariations: string[] = [uniqueVariations[0]]; // Keep original first
+        const frontStripped: string[] = [];
+        const backStripped: string[] = [];
+        const bothStripped: string[] = [];
+        
+        // Categorize variations
+        for (let i = 1; i < uniqueVariations.length; i++) {
+          const variation = uniqueVariations[i];
+          const firstWord = words[0];
+          const lastWord = words[words.length - 1];
+          
+          if (!variation.includes(firstWord) && variation.includes(lastWord)) {
+            frontStripped.push(variation);
+          } else if (variation.includes(firstWord) && !variation.includes(lastWord)) {
+            backStripped.push(variation);
+          } else if (!variation.includes(firstWord) && !variation.includes(lastWord)) {
+            bothStripped.push(variation);
+          }
+        }
+        
+        // Interleave front and back stripped variations
+        const maxLength = Math.max(frontStripped.length, backStripped.length);
+        for (let i = 0; i < maxLength; i++) {
+          if (i < frontStripped.length) {
+            reorderedVariations.push(frontStripped[i]);
+          }
+          if (i < backStripped.length) {
+            reorderedVariations.push(backStripped[i]);
+          }
+          if (i < bothStripped.length) {
+            reorderedVariations.push(bothStripped[i]);
+          }
+        }
+        
+        return reorderedVariations;
       }
 
       progress.report({ message: 'Searching for matching source files...' });
@@ -1070,14 +1141,14 @@ export async function findCodeLocation(query: string): Promise<{ file: string; l
       async function searchAllFiles(searchQuery: string): Promise<{file: string; line: number} | null> {
         for (let i = 0; i < filesToSearch.length; i += BATCH_SIZE) {
           const batch = filesToSearch.map(file => file.fsPath).slice(i, i + BATCH_SIZE);
-
+          
           // Search files in parallel
           const batchPromises = batch.map(async (file) => {
             searchCount++;
             if (searchCount % 100 === 0) {
               progress.report({ message: `Searching for "${searchQuery}" (processed ${searchCount} files)` });
             }
-
+            
             const match = await searchFile(file, searchQuery);
             if (match) {
               const relativePath = path.relative(workspaceRoot, file);
@@ -1085,61 +1156,35 @@ export async function findCodeLocation(query: string): Promise<{ file: string; l
             }
             return null;
           });
-
+          
           const batchResults = await Promise.all(batchPromises);
           const validMatches = batchResults.filter(m => m !== null) as Array<{ file: string; line: number }>;
-
+          
           if (validMatches.length > 0) {
             return validMatches[0];
           }
         }
-
+        
         return null; // No matches found
       }
-
-      // First, try with the exact query
-      progress.report({ message: `Searching for exact match: "${query}"` });
-      const exactMatch = await searchAllFiles(query);
-
-      if (exactMatch) {
-        return exactMatch;
-      }
-
-      // If exact match failed, try with variations
-      const words = query.split(/\s+/).filter(w => w.length > 0);
-
-      // Only try variations if we have multiple words
-      if (words.length > 4) {
-        progress.report({ message: `No exact match found, trying variations...` });
-
-        // Generate variations by removing words from front and back
-        const variations: string[] = [];
-
-        // Remove words from the front (1, 2, 3, etc.)
-        for (let i = 1; i < words.length; i++) {
-          const frontVariation = words.slice(i).join(' ');
-          if (frontVariation.length >= 3) {
-            variations.push(frontVariation);
-          }
-
-          // Remove words from the back (1, 2, 3, etc.)
-          const backVariation = words.slice(0, words.length - i).join(' ');
-          if (backVariation.length >= 3) {
-            variations.push(backVariation);
-          }
-        }
-
-        // Try each variation until we find a match
-        for (const variation of variations) {
-          progress.report({ message: `Trying variation: "${variation}"` });
-          const match = await searchAllFiles(variation);
-          if (match) {
-            return match;
-          }
+      
+      // Generate variations of the search query
+      const searchVariations = generateSearchVariations(query);
+      console.log('Generated search variations:', searchVariations);
+      
+      // Try each variation in sequence until we find a match
+      for (const variation of searchVariations) {
+        progress.report({ message: `Searching variation: "${variation}"` });
+        const match = await searchAllFiles(variation);
+        if (match) {
+          console.log('Found match with variation:', variation);
+          return match;
         }
       }
+      
+      // If no matches found with any variation
+      return null;
 
-      return null; // No matches found with any variation
     });
 
     // Check result after withProgress finishes

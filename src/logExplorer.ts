@@ -421,10 +421,12 @@ export class LogExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
         return;
       }
 
-      // If we have fileName and lineNumber in the log entry, show it immediately
+      // If we have fileName and lineNumber in the log entry, try to show it immediately
+      let directFileFound = false;
       if (log.fileName && log.fileName !== '' && typeof log.lineNumber === 'number' && log.lineNumber >= 0) {
         const fullPath = path.join(repoPath, log.fileName);
         if (fs.existsSync(fullPath)) {
+          directFileFound = true;
           // Cache the location for future use
           const sourceLocation = {
             file: log.fileName,
@@ -444,31 +446,35 @@ export class LogExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
 
           // Start Claude analysis in the background
           this.startBackgroundAnalysis(log, log.fileName, log.lineNumber);
+        } else {
+          console.log(`File ${log.fileName} not found at ${fullPath}, falling back to semantic search`);
         }
       }
 
-      // Show progress indicator for analysis
-      await vscode.window.withProgress({
-        location: vscode.ProgressLocation.Notification,
-        title: 'Processing log...',
-        cancellable: false
-      }, async (progress) => {
-        // Update the variable and call stack explorers with the selected log
-        if (this.variableExplorerProvider) {
-          // Only show loading state if we need to analyze
-          this.variableExplorerProvider.setLog(log, !log.claudeAnalysis);
-        }
+      // If direct file access failed or wasn't possible, proceed with semantic search
+      if (!directFileFound) {
+        await vscode.window.withProgress({
+          location: vscode.ProgressLocation.Notification,
+          title: 'Analyzing log...',
+          cancellable: false
+        }, async (progress) => {
+          // Update the variable and call stack explorers with the selected log
+          if (this.variableExplorerProvider) {
+            this.variableExplorerProvider.setLog(log, true);
+          }
+          if (this.callStackExplorerProvider) {
+            this.callStackExplorerProvider.setLogEntry(log, true);
+          }
 
-        if (this.callStackExplorerProvider) {
-          this.callStackExplorerProvider.setLogEntry(log);
-        }
-
-        // Extract a normalized message for analysis
-        const logMessage = log.message || log.rawText || '';
-
-        let analysis = log.claudeAnalysis;
-        if (!analysis) {
-          progress.report({ message: 'Analyzing log with Claude...' });
+          // Get the log message for analysis
+          let logMessage = '';
+          if (log.axiomSpan) {
+            logMessage = log.axiomSpan.name || '';
+          } else if (log.jsonPayload?.fields?.message) {
+            logMessage = log.jsonPayload.fields.message;
+          } else {
+            logMessage = log.message || log.rawText || '';
+          }
 
           // Detect language based on repository files
           let language = 'unknown';
@@ -489,17 +495,14 @@ export class LogExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
             language = 'unknown';
           }
 
-          analysis = await this.claudeService.analyzeLog(logMessage, language);
-          log.claudeAnalysis = analysis;
-          // Refresh variable explorer after analysis is complete
-          if (this.variableExplorerProvider) {
-            this.variableExplorerProvider.setLog(log, false);
-          }
-        }
+          // Analyze the log with Claude
+          progress.report({ message: 'Analyzing log message...' });
+          const analysis = await this.claudeService.analyzeLog(logMessage, language);
 
-        // Only proceed with source location search if we don't already have it from the log entry
-        if (!log.fileName || log.fileName === '' || typeof log.lineNumber !== 'number' || log.lineNumber < 0) {
-          progress.report({ message: 'Finding source code location...' });
+          // Update variable explorer with analysis results
+          if (this.variableExplorerProvider) {
+            this.variableExplorerProvider.setLog(log);
+          }
 
           // Find source location - use cached value if available
           let sourceLocation = log.codeLocationCache;
@@ -533,8 +536,8 @@ export class LogExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
           if (this.callStackExplorerProvider) {
             this.analyzeCallStackInBackground(log, sourceLocation.file, sourceLocation.line, logMessage, analysis?.staticSearchString);
           }
-        }
-      });
+        });
+      }
     } catch (error) {
       console.error('Error in openLog:', error);
       vscode.window.showErrorMessage(`Error opening log: ${error}`);
@@ -546,6 +549,10 @@ export class LogExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
     try {
       const repoPath = this.context.globalState.get<string>('repoPath');
       if (!repoPath) return;
+
+      if (!log.message) {
+        throw new Error('Log message is not set');
+      }
 
       const logMessage = log.message || log.rawText || '';
       let analysis = log.claudeAnalysis;
