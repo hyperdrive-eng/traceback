@@ -621,6 +621,15 @@ export class RegexLogParser implements LogParser {
   private async parseWithPatterns(lines: string[]): Promise<LogEntry[]> {
     const logs: LogEntry[] = [];
     
+    // If no valid patterns, use fallback parsing
+    if (!this.patterns || this.patterns.length === 0) {
+      console.debug('No valid patterns available, using fallback parsing');
+      return Promise.all(lines.map(line => {
+        if (!line.trim()) return null;
+        return this.createFallbackLogEntry(line);
+      })).then(entries => entries.filter(entry => entry !== null) as LogEntry[]);
+    }
+    
     for (const line of lines) {
       if (!line.trim()) continue;
       
@@ -629,6 +638,12 @@ export class RegexLogParser implements LogParser {
       
       for (const patternObj of this.patterns) {
         try {
+          // Validate pattern object
+          if (!patternObj || !patternObj.pattern || !patternObj.extractionMap) {
+            console.debug('Invalid pattern object, skipping:', patternObj);
+            continue;
+          }
+
           const regex = new RegExp(patternObj.pattern);
           const match = regex.exec(line);
           
@@ -648,7 +663,7 @@ export class RegexLogParser implements LogParser {
             break;
           }
         } catch (error) {
-          console.debug(`Error with pattern ${patternObj.pattern}:`, error);
+          console.debug(`Error with pattern ${patternObj?.pattern || 'unknown'}:`, error);
           continue;
         }
       }
