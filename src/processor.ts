@@ -197,30 +197,43 @@ export interface LogParser {
 export class JsonLogParser implements LogParser {
   canParse(content: string): boolean {
     try {
-      // Check if content is valid JSON
-      const parsed = JSON.parse(content);
-      return true;
+      // Try parsing the first non-empty line
+      const lines = content.split('\n')
+        .map(line => line.trim())
+        .filter(line => line.length > 0);
+      
+      if (lines.length > 0) {
+        JSON.parse(lines[0]);
+        return true;
+      }
+      return false;
     } catch (error) {
       return false;
     }
   }
 
   async parse(content: string): Promise<LogEntry[]> {
-    try {
-      const parsed = JSON.parse(content);
+    const logs: LogEntry[] = [];
+    const lines = content.split('\n')
+      .map(line => line.trim())
+      .filter(line => line.length > 0);
 
-      // Handle array of log entries
-      if (Array.isArray(parsed)) {
-        const normalizedLogs = parsed.map(log => this.normalizeLogEntry(log));
-        return normalizedLogs;
+    for (const line of lines) {
+      try {
+        const parsed = JSON.parse(line);
+        if (Array.isArray(parsed)) {
+          // If a line contains an array, process each item
+          logs.push(...parsed.map((log: any) => this.normalizeLogEntry(log)));
+        } else {
+          // Single log entry
+          logs.push(this.normalizeLogEntry(parsed));
+        }
+      } catch (error) {
+        console.debug('Skipping invalid JSON line:', error);
       }
-
-      // Handle single log entry
-      return [this.normalizeLogEntry(parsed)];
-    } catch (error) {
-      console.error('Error parsing JSON logs:', error);
-      return [];
     }
+
+    return logs;
   }
 
   private normalizeLogEntry(log: any): LogEntry {
@@ -231,7 +244,9 @@ export class JsonLogParser implements LogParser {
       rawText: JSON.stringify(log),
       jsonPayload: log.jsonPayload,
       message: (log.jsonPayload && log.jsonPayload.fields && log.jsonPayload.fields.message) || log.message || log.msg || '',
-      target: (log.jsonPayload && log.jsonPayload.target) || log.target || log.service || log.component || 'unknown'
+      target: (log.jsonPayload && log.jsonPayload.target) || log.target || log.service || log.component || 'unknown',
+      fileName: log.fileName || log.file || log.filename || '',
+      lineNumber: (log.lineNumber || log.line || log.lineno || log.line_number || 0) - 1
     };
     return normalizedLog;
   }
@@ -671,7 +686,9 @@ export class RegexLogParser implements LogParser {
     const serviceName = data.serviceName || data.target || '';
     const message = data.message || rawLine;
     const target = serviceName || 'unknown';
-    
+    const fileName = data.fileName || '';
+    const lineNumber = (data.lineNumber && parseInt(data.lineNumber) - 1) || -1;
+
     // Extract variables if they exist
     const variables: Record<string, string> = {};
     Object.entries(data).forEach(([key, value]) => {
@@ -689,6 +706,8 @@ export class RegexLogParser implements LogParser {
       serviceName,
       message,
       target,
+      fileName,
+      lineNumber,
       jsonPayload: {
         fields: {
           message,

@@ -20,6 +20,8 @@ export interface LogEntry {
   severity: string;
   timestamp: string;
   rawText: string;
+  fileName?: string;
+  lineNumber?: number;
 
   // Original log format fields
   insertId?: string;
@@ -99,9 +101,9 @@ export class LogExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
   private sortByTime: boolean = true;
   private selectedLogLevels: Set<string> = new Set(['INFO', 'DEBUG', 'WARNING', 'ERROR']);
   private variableExplorerProvider: { setLog: (log: LogEntry | undefined, isAnalyzing?: boolean) => void } | undefined;
-  private callStackExplorerProvider: { 
-    setLogEntry: (log: LogEntry | undefined, isAnalyzing?: boolean) => void, 
-    findPotentialCallers: (sourceFile: string, lineNumber: number) => Promise<Array<{ filePath: string; lineNumber: number; code: string; functionName: string; functionRange?: vscode.Range }>>, 
+  private callStackExplorerProvider: {
+    setLogEntry: (log: LogEntry | undefined, isAnalyzing?: boolean) => void,
+    findPotentialCallers: (sourceFile: string, lineNumber: number) => Promise<Array<{ filePath: string; lineNumber: number; code: string; functionName: string; functionRange?: vscode.Range }>>,
     analyzeCallers: (currentLogLine: string, staticSearchString: string, allLogs: LogEntry[], potentialCallers: Array<{ filePath: string; lineNumber: number; code: string; functionName: string; functionRange?: vscode.Range }>) => Promise<void>,
     getCallStackAnalysis: () => CallerAnalysis,
     setCallStackAnalysisFromCache: (rankedCallers: Array<{
@@ -154,9 +156,9 @@ export class LogExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
   /**
    * Set the call stack explorer provider to update when logs are selected
    */
-  public setCallStackExplorer(provider: { 
-    setLogEntry: (log: LogEntry | undefined, isAnalyzing?: boolean) => void, 
-    findPotentialCallers: (sourceFile: string, lineNumber: number) => Promise<Array<{ filePath: string; lineNumber: number; code: string; functionName: string; functionRange?: vscode.Range }>>, 
+  public setCallStackExplorer(provider: {
+    setLogEntry: (log: LogEntry | undefined, isAnalyzing?: boolean) => void,
+    findPotentialCallers: (sourceFile: string, lineNumber: number) => Promise<Array<{ filePath: string; lineNumber: number; code: string; functionName: string; functionRange?: vscode.Range }>>,
     analyzeCallers: (currentLogLine: string, staticSearchString: string, allLogs: LogEntry[], potentialCallers: Array<{ filePath: string; lineNumber: number; code: string; functionName: string; functionRange?: vscode.Range }>) => Promise<void>,
     getCallStackAnalysis: () => CallerAnalysis,
     setCallStackAnalysisFromCache: (rankedCallers: Array<{
@@ -217,7 +219,7 @@ export class LogExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
           }
 
           const groupName = this.getGroupName(log);
-          
+
           if (groupName === currentGroupName) {
             // Add to current group if from same group
             currentGroup.push(log);
@@ -236,7 +238,7 @@ export class LogExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
                 ));
               }
             }
-            
+
             // Start new group
             currentGroupName = groupName;
             currentGroup = [log];
@@ -343,7 +345,7 @@ export class LogExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
 
       // Reset first log time and ID counter before loading new logs
       LogTreeItem.resetFirstLogTime();
-      
+
       // Clear existing logs and span map
       this.logs = [];
       this.spanMap.clear();
@@ -407,41 +409,66 @@ export class LogExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
 
   private async openLog(log: LogEntry): Promise<void> {
     console.log('openLog called with:', log);
-    
+
     // Clear previous decorations
     clearDecorations();
 
     try {
-      // Show progress indicator for initial analysis
+      // Get repository root path early as we need it for both paths
+      const repoPath = this.context.globalState.get<string>('repoPath');
+      if (!repoPath) {
+        vscode.window.showErrorMessage('Repository root path is not set.');
+        return;
+      }
+
+      // If we have fileName and lineNumber in the log entry, show it immediately
+      if (log.fileName && log.fileName !== '' && typeof log.lineNumber === 'number' && log.lineNumber >= 0) {
+        const fullPath = path.join(repoPath, log.fileName);
+        if (fs.existsSync(fullPath)) {
+          // Cache the location for future use
+          const sourceLocation = {
+            file: log.fileName,
+            line: log.lineNumber,
+            lastUpdated: new Date().toISOString()
+          };
+          log.codeLocationCache = sourceLocation;
+
+          // Open the file immediately
+          const document = await vscode.workspace.openTextDocument(fullPath);
+          const editor = await vscode.window.showTextDocument(document);
+
+          // Highlight the line
+          const range = new vscode.Range(log.lineNumber, 0, log.lineNumber, 0);
+          editor.revealRange(range, vscode.TextEditorRevealType.InCenter);
+          editor.setDecorations(logLineDecorationType, [new vscode.Range(log.lineNumber, 0, log.lineNumber, 999)]);
+
+          // Start Claude analysis in the background
+          this.startBackgroundAnalysis(log, log.fileName, log.lineNumber);
+        }
+      }
+
+      // Show progress indicator for analysis
       await vscode.window.withProgress({
         location: vscode.ProgressLocation.Notification,
         title: 'Processing log...',
         cancellable: false
       }, async (progress) => {
-        
         // Update the variable and call stack explorers with the selected log
         if (this.variableExplorerProvider) {
           // Only show loading state if we need to analyze
           this.variableExplorerProvider.setLog(log, !log.claudeAnalysis);
         }
-        
+
         if (this.callStackExplorerProvider) {
           this.callStackExplorerProvider.setLogEntry(log);
         }
-        
+
         // Extract a normalized message for analysis
         const logMessage = log.message || log.rawText || '';
-        
+
         let analysis = log.claudeAnalysis;
         if (!analysis) {
           progress.report({ message: 'Analyzing log with Claude...' });
-          
-          // Get repository root path
-          const repoPath = this.context.globalState.get<string>('repoPath');
-          if (!repoPath) {
-            vscode.window.showErrorMessage('Repository root path is not set.');
-            return;
-          }
 
           // Detect language based on repository files
           let language = 'unknown';
@@ -457,7 +484,6 @@ export class LogExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
             } else if (fs.existsSync(path.join(repoPath, 'go.mod'))) {
               language = 'Go';
             }
-            // Add more language detection as needed
           } catch (error) {
             console.error('Error detecting language:', error);
             language = 'unknown';
@@ -470,67 +496,90 @@ export class LogExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
             this.variableExplorerProvider.setLog(log, false);
           }
         }
-        
-        // Get repository root path
-        const repoPath = this.context.globalState.get<string>('repoPath');
-        if (!repoPath) {
-          vscode.window.showErrorMessage('Repository root path is not set.');
-          return;
-        }
-        
-        progress.report({ message: 'Finding source code location...' });
-        
-        // Find source location - use cached value if available
-        let sourceLocation: { file: string; line: number } | undefined = log.codeLocationCache;
-        if (!sourceLocation) {
-          sourceLocation = await this.findSourceLocation(log, analysis, repoPath);
-          if (sourceLocation) {
-            log.codeLocationCache = {
-              ...sourceLocation,
-              lastUpdated: new Date().toISOString()
-            };
-          }
-        }
-        
-        if (!sourceLocation) {
-          vscode.window.showInformationMessage(
-            'Could not determine source file location. Try adjusting the log parser or search strategy.'
-          );
-          return;
-        }
-        
-        const { file: sourceFile, line: targetLine } = sourceLocation;
-        
-        // Open the file and highlight the relevant line
-        const fullPath = path.join(repoPath, sourceFile);
-        if (!fs.existsSync(fullPath)) {
-          vscode.window.showErrorMessage(`Could not find ${sourceFile} in the repository`);
-          return;
-        }
-        
-        // Open the file
-        const document = await vscode.workspace.openTextDocument(fullPath);
-        const editor = await vscode.window.showTextDocument(document);
-        
-        if (targetLine >= 0) {
-          // Highlight the line
-          const range = new vscode.Range(targetLine, 0, targetLine, 0);
-          editor.revealRange(range, vscode.TextEditorRevealType.InCenter);
-          editor.setDecorations(logLineDecorationType, [new vscode.Range(targetLine, 0, targetLine, 999)]);
-          
-          // Get the line text and decorate variables
-          const lineText = document.lineAt(targetLine).text;
-          this.decorateVariables(editor, targetLine, lineText, analysis);
-        }
 
-        // Start call stack analysis in the background
-        if (this.callStackExplorerProvider) {
-          this.analyzeCallStackInBackground(log, sourceFile, targetLine, logMessage, analysis?.staticSearchString);
+        // Only proceed with source location search if we don't already have it from the log entry
+        if (!log.fileName || log.fileName === '' || typeof log.lineNumber !== 'number' || log.lineNumber < 0) {
+          progress.report({ message: 'Finding source code location...' });
+
+          // Find source location - use cached value if available
+          let sourceLocation = log.codeLocationCache;
+
+          if (!sourceLocation) {
+            sourceLocation = await this.findSourceLocation(log, analysis, repoPath);
+            log.codeLocationCache = sourceLocation;
+          }
+
+          // Open the file and highlight the relevant line
+          const fullPath = path.join(repoPath, sourceLocation.file);
+          if (!fs.existsSync(fullPath)) {
+            vscode.window.showErrorMessage(`Could not find ${sourceLocation.file} in the repository`);
+            return;
+          }
+
+          // Open the file
+          const document = await vscode.workspace.openTextDocument(fullPath);
+          const editor = await vscode.window.showTextDocument(document);
+
+          // Highlight the line
+          const range = new vscode.Range(sourceLocation.line, 0, sourceLocation.line, 0);
+          editor.revealRange(range, vscode.TextEditorRevealType.InCenter);
+          editor.setDecorations(logLineDecorationType, [new vscode.Range(sourceLocation.line, 0, sourceLocation.line, 999)]);
+
+          // Get the line text and decorate variables
+          const lineText = document.lineAt(sourceLocation.line).text;
+          this.decorateVariables(editor, sourceLocation.line, lineText, analysis);
+
+          // Start call stack analysis in the background
+          if (this.callStackExplorerProvider) {
+            this.analyzeCallStackInBackground(log, sourceLocation.file, sourceLocation.line, logMessage, analysis?.staticSearchString);
+          }
         }
       });
     } catch (error) {
       console.error('Error in openLog:', error);
       vscode.window.showErrorMessage(`Error opening log: ${error}`);
+    }
+  }
+
+  // Helper method to start background analysis
+  private async startBackgroundAnalysis(log: LogEntry, sourceFile: string, lineNumber: number): Promise<void> {
+    try {
+      const repoPath = this.context.globalState.get<string>('repoPath');
+      if (!repoPath) return;
+
+      const logMessage = log.message || log.rawText || '';
+      let analysis = log.claudeAnalysis;
+
+      if (!analysis) {
+        // Detect language based on repository files
+        let language = 'unknown';
+        try {
+          if (fs.existsSync(path.join(repoPath, 'package.json'))) {
+            language = 'TypeScript/JavaScript';
+          } else if (fs.existsSync(path.join(repoPath, 'requirements.txt')) || fs.existsSync(path.join(repoPath, 'setup.py'))) {
+            language = 'Python';
+          } else if (fs.existsSync(path.join(repoPath, 'pom.xml')) || fs.existsSync(path.join(repoPath, 'build.gradle'))) {
+            language = 'Java';
+          } else if (fs.existsSync(path.join(repoPath, 'Cargo.toml'))) {
+            language = 'Rust';
+          } else if (fs.existsSync(path.join(repoPath, 'go.mod'))) {
+            language = 'Go';
+          }
+        } catch (error) {
+          console.error('Error detecting language:', error);
+          language = 'unknown';
+        }
+
+        analysis = await this.claudeService.analyzeLog(logMessage, language);
+        log.claudeAnalysis = analysis;
+      }
+
+      // Start call stack analysis in the background
+      if (this.callStackExplorerProvider) {
+        this.analyzeCallStackInBackground(log, sourceFile, lineNumber, logMessage, analysis?.staticSearchString);
+      }
+    } catch (error) {
+      console.error('Error in background analysis:', error);
     }
   }
 
@@ -564,7 +613,7 @@ export class LogExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
           path.join(repoPath, sourceFile),
           targetLine
         );
-        
+
         if (!potentialCallers || potentialCallers.length === 0) {
           // If no potential callers found, update the call stack explorer with empty state
           this.callStackExplorerProvider.setLogEntry(log, false);
@@ -602,17 +651,17 @@ export class LogExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
       this.callStackExplorerProvider?.setLogEntry(log, false);
     }
   }
-  
+
   /**
    * Find the source code location based on the log and analysis
    */
   private async findSourceLocation(
-    log: LogEntry, 
-    analysis?: LLMLogAnalysis, 
+    log: LogEntry,
+    analysis?: LLMLogAnalysis,
     repoPath?: string
-  ): Promise<{ file: string; line: number }> {
+  ): Promise<{ file: string; line: number; lastUpdated: string }> {
     if (!repoPath) throw new Error('Repository path is not set.');
-    
+
     // Check cache first
     if (log.codeLocationCache) {
       // Verify the file still exists
@@ -620,11 +669,12 @@ export class LogExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
       if (fs.existsSync(fullPath)) {
         return {
           file: log.codeLocationCache.file,
-          line: log.codeLocationCache.line
+          line: log.codeLocationCache.line,
+          lastUpdated: new Date().toISOString()
         };
       }
     }
-    
+
     // If no cache or file doesn't exist, proceed with normal search
     let searchResult: { file: string; line: number } | undefined;
 
@@ -650,7 +700,7 @@ export class LogExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
           .replace(/::/g, '/')
           .replace(/-/g, '_')
           .replace(/\s+/g, '_');
-        
+
         try {
           // Try both exact and wildcard matching
           for (const pattern of [
@@ -661,12 +711,13 @@ export class LogExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
               new vscode.RelativePattern(repoPath, pattern),
               '**/node_modules/**'
             );
-            
+
             if (files.length > 0) {
               // If we found files but don't know the line, return line 0 as a fallback
               return {
                 file: path.relative(repoPath, files[0].fsPath),
-                line: 0
+                line: 0,
+                lastUpdated: new Date().toISOString()
               };
             }
           }
@@ -676,18 +727,17 @@ export class LogExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
       }
     }
 
-    // If we found a location, cache it
-    if (searchResult) {
-      log.codeLocationCache = {
-        file: searchResult.file,
-        line: searchResult.line,
-        lastUpdated: new Date().toISOString()
-      };
+    if (!searchResult) {
+      throw new Error('No search result found');
     }
 
-    return searchResult;
+    return {
+      file: searchResult.file,
+      line: searchResult.line,
+      lastUpdated: new Date().toISOString()
+    };
   }
-  
+
   /**
    * Decorate variables in the editor
    */
@@ -698,14 +748,14 @@ export class LogExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
     analysis?: LLMLogAnalysis
   ): void {
     if (!analysis?.variables) return;
-    
+
     const decorations: vscode.DecorationOptions[] = [];
-    
+
     Object.entries(analysis.variables).forEach(([name, value]) => {
       // Use word boundary regex to find the variable
       const regex = new RegExp(`\\b${name}\\b`, 'g');
       let match;
-      
+
       while ((match = regex.exec(lineText)) !== null) {
         const startIndex = match.index;
         const range = new vscode.Range(
@@ -714,7 +764,7 @@ export class LogExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
           targetLine,
           startIndex + name.length
         );
-        
+
         decorations.push({
           range,
           renderOptions: {
@@ -727,7 +777,7 @@ export class LogExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
         });
       }
     });
-    
+
     // Apply all decorations at once
     if (decorations.length > 0) {
       editor.setDecorations(variableValueDecorationType, decorations);
@@ -855,48 +905,9 @@ export class LogTreeItem extends vscode.TreeItem {
   private static idCounter = 0;  // Keep the counter for unique IDs
 
   constructor(public readonly log: LogEntry) {
-    let fullMessage: string;
-
-    // Handle Axiom trace format
-    if (log.axiomSpan) {
-      // Use span name as the main message
-      const operationName = log.axiomSpan.name || 'Unknown operation';
-
-      // Build extra information from important attributes
-      let attributeInfo = '';
-      const importantAttrs = [
-        'http.method',
-        'http.status_code',
-        'error',
-        'rpc.method',
-        'attributes.http.method',
-        'attributes.http.status_code',
-        'attributes.error.type'
-      ];
-
-      for (const attrName of importantAttrs) {
-        if (log.axiomSpan[attrName]) {
-          attributeInfo += ` [${attrName.replace('attributes.', '')}=${log.axiomSpan[attrName]}]`;
-        }
-      }
-
-      // Include duration if available
-      const duration = log.axiomSpan.duration ? ` (${log.axiomSpan.duration})` : '';
-
-      fullMessage = `${operationName}${duration}${attributeInfo}`;
-    }
-    // Handle original log format
-    else if (log.jsonPayload?.fields) {
-      const message = log.jsonPayload.fields.message || '';
-      const chain = log.jsonPayload.fields.chain ? `[${log.jsonPayload.fields.chain}] ` : '';
-      fullMessage = `${chain}${message}`;
-    }
-    // Fallback to unified message field or rawText
-    else {
-      fullMessage = log.message || log.rawText || 'No message';
-    }
-
-    const truncatedMessage = LogTreeItem.truncateMessage(fullMessage);
+    // Use the message field directly, fall back to rawText only if necessary
+    const message = log.message || log.rawText || 'No message';
+    const truncatedMessage = LogTreeItem.truncateMessage(message);
     super(truncatedMessage, vscode.TreeItemCollapsibleState.None);
 
     // Generate a unique ID by combining available identifiers with a counter
@@ -928,7 +939,6 @@ export class LogTreeItem extends vscode.TreeItem {
 
     // Set the icon based on severity
     this.iconPath = this.getIcon(log.severity);
-
 
     this.command = {
       command: 'traceback.openLog',
