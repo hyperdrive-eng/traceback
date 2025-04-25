@@ -294,7 +294,7 @@ Your response must be in JSON format with the following structure:
                     },
                     body: JSON.stringify(request),
                     // Add a reasonable timeout
-                    timeout: 30000
+                    timeout: 120000
                 });
             } catch (fetchError) {
                 console.error('OllamaService: Network error when connecting to Ollama:', fetchError);
