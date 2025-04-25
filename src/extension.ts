@@ -130,6 +130,89 @@ export function activate(context: vscode.ExtensionContext) {
       await context.secrets.store("axiom-token", token);
     }
   );
+  
+  // Command to set Ollama endpoint
+  const setOllamaEndpointCommand = vscode.commands.registerCommand(
+    "traceback.setOllamaEndpoint",
+    async () => {
+      const currentEndpoint = vscode.workspace.getConfiguration('traceback').get<string>('ollamaEndpoint') || 'http://localhost:11434';
+
+      const endpoint = await vscode.window.showInputBox({
+        prompt: "Enter Ollama API endpoint",
+        placeHolder: "http://localhost:11434",
+        value: currentEndpoint
+      });
+
+      if (endpoint) {
+        await vscode.workspace.getConfiguration('traceback').update('ollamaEndpoint', endpoint, true);
+        
+        // Reset the LLM service instance to force recreation with the new endpoint
+        const { LLMServiceFactory } = require('./llmService');
+        LLMServiceFactory.resetServiceInstance();
+        
+        vscode.window.showInformationMessage(`Ollama endpoint set to: ${endpoint}`);
+      }
+    }
+  );
+
+  // Command to set Ollama model
+  const setOllamaModelCommand = vscode.commands.registerCommand(
+    "traceback.setOllamaModel",
+    async () => {
+      const currentModel = vscode.workspace.getConfiguration('traceback').get<string>('ollamaModel') || 'llama3';
+
+      const model = await vscode.window.showInputBox({
+        prompt: "Enter Ollama model name (must be available in your Ollama instance)",
+        placeHolder: "llama3",
+        value: currentModel
+      });
+
+      if (model) {
+        await vscode.workspace.getConfiguration('traceback').update('ollamaModel', model, true);
+        
+        // Reset the LLM service instance to force recreation with the new model
+        const { LLMServiceFactory } = require('./llmService');
+        LLMServiceFactory.resetServiceInstance();
+        
+        vscode.window.showInformationMessage(`Ollama model set to: ${model}`);
+      }
+    }
+  );
+  
+  // Command to set LLM provider
+  const setLlmProviderCommand = vscode.commands.registerCommand(
+    "traceback.setLlmProvider",
+    async () => {
+      const currentProvider = vscode.workspace.getConfiguration('traceback').get<string>('llmProvider') || 'claude';
+
+      const options = [
+        { label: 'Claude API', description: 'Use Claude API (requires API key)', target: 'claude' },
+        { label: 'Ollama (Local)', description: 'Use local Ollama instance', target: 'ollama' }
+      ];
+      
+      const selected = await vscode.window.showQuickPick(options, {
+        placeHolder: 'Select LLM provider'
+      });
+
+      if (selected) {
+        await vscode.workspace.getConfiguration('traceback').update('llmProvider', selected.target, true);
+        
+        // Reset the LLM service instance to force recreation with the new provider
+        const { LLMServiceFactory } = require('./llmService');
+        LLMServiceFactory.resetServiceInstance();
+        
+        vscode.window.showInformationMessage(`LLM provider set to: ${selected.label}`);
+        
+        // If switching to Ollama, check if endpoint is set
+        if (selected.target === 'ollama') {
+          const endpoint = vscode.workspace.getConfiguration('traceback').get<string>('ollamaEndpoint');
+          if (!endpoint) {
+            vscode.commands.executeCommand('traceback.setOllamaEndpoint');
+          }
+        }
+      }
+    }
+  );
 
   // Command to get stored Axiom API token
   const getAxiomTokenCommand = vscode.commands.registerCommand(
@@ -258,7 +341,10 @@ export function activate(context: vscode.ExtensionContext) {
     getAxiomTokenCommand,
     getAxiomDatasetCommand,
     registerLogParserCommand,
-    openCallStackLocationCommand
+    openCallStackLocationCommand,
+    setOllamaEndpointCommand,
+    setOllamaModelCommand,
+    setLlmProviderCommand
   );
 
   // Initial refresh

@@ -39,6 +39,22 @@
               "type": "string",
               "default": "",
               "description": "API key for Claude AI service"
+          },
+          "traceback.llmProvider": {
+              "type": "string",
+              "enum": ["claude", "ollama"],
+              "default": "claude",
+              "description": "LLM provider to use (Claude or Ollama)"
+          },
+          "traceback.ollamaEndpoint": {
+              "type": "string",
+              "default": "http://localhost:11434",
+              "description": "Endpoint URL for Ollama API"
+          },
+          "traceback.ollamaModel": {
+              "type": "string",
+              "default": "llama3",
+              "description": "Model name to use with Ollama"
           }
       }
     },
@@ -46,6 +62,21 @@
       {
         "command": "traceback.setClaudeApiKey",
         "title": "Set Claude API Key",
+        "category": "TraceBack"
+      },
+      {
+        "command": "traceback.setOllamaEndpoint",
+        "title": "Set Ollama Endpoint",
+        "category": "TraceBack"
+      },
+      {
+        "command": "traceback.setOllamaModel",
+        "title": "Set Ollama Model",
+        "category": "TraceBack"
+      },
+      {
+        "command": "traceback.setLlmProvider",
+        "title": "Set LLM Provider (Claude/Ollama)",
         "category": "TraceBack"
       },
       {

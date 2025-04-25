@@ -5,7 +5,8 @@ import { LogEntry } from './logExplorer';
 import { logLineDecorationType } from './decorations';
 import fetch from 'node-fetch';
 import { Axiom } from '@axiomhq/js';
-import { ClaudeService, RegexPattern } from './claudeService';
+import { RegexPattern } from './llmService';
+import { LLMServiceFactory } from './llmService';
 
 /**
  * Load trace data from Axiom API
@@ -542,7 +543,7 @@ export class PlainTextLogParser implements LogParser {
  * Parser that uses Claude-generated regex patterns to parse log lines
  */
 export class RegexLogParser implements LogParser {
-  private claudeService = ClaudeService.getInstance();
+  private llmService = LLMServiceFactory.getInstance().createLLMService();
   private patterns: RegexPattern[] = [];
   private sampleLogs: string[] = [];
   private maxSampleLogs = 20; // Maximum number of sample logs to collect for pattern generation
@@ -613,7 +614,7 @@ export class RegexLogParser implements LogParser {
       console.log(`Generating regex patterns from ${this.sampleLogs.length} sample logs...`);
 
       // Call Claude to generate patterns
-      this.patterns = await this.claudeService.generateLogParsingRegex(this.sampleLogs);
+      this.patterns = await this.llmService.generateLogParsingRegex(this.sampleLogs);
 
       console.log(`Generated ${this.patterns.length} regex patterns`);
 

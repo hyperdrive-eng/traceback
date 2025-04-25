@@ -1,37 +1,8 @@
 import * as vscode from 'vscode';
 import fetch from 'node-fetch';
+import { LLMService, LLMLogAnalysis, CallerAnalysis, RegexPattern, filterRelevantLogs } from './llmService';
 
-export interface LLMLogAnalysis {
-    staticSearchString: string;
-    variables: Record<string, any>;
-}
-
-interface PotentialCaller {
-    filePath: string;
-    lineNumber: number;
-    code: string;
-    functionName: string;
-    functionRange?: vscode.Range;
-}
-
-export interface CallerAnalysis {
-    rankedCallers: Array<{
-        filePath: string;
-        lineNumber: number;
-        code: string;
-        functionName: string;
-        confidence: number;
-        explanation: string;
-    }>;
-}
-
-export interface RegexPattern {
-    pattern: string;
-    description: string;
-    extractionMap: Record<string, string>;
-}
-
-export class ClaudeService {
+export class ClaudeService implements LLMService {
     private static instance: ClaudeService;
     private apiKey: string | undefined;
     private apiEndpoint: string = 'https://api.anthropic.com/v1/messages';
@@ -263,7 +234,7 @@ Variables: {
     ): Promise<CallerAnalysis> {
         // Filter and limit log lines to prevent prompt too long errors
         const MAX_LOG_LINES = 20; // Reasonable limit to prevent context overflow
-        const filteredLogs = this.filterRelevantLogs(currentLogLine, allLogLines, MAX_LOG_LINES);
+        const filteredLogs = filterRelevantLogs(currentLogLine, allLogLines, MAX_LOG_LINES);
 
         const tools = [{
             name: "analyze_callers",
@@ -590,63 +561,5 @@ Return the patterns using the generate_log_regex function.`;
             console.error('Error calling Claude API for regex patterns:', error);
             throw error;
         }
-    }
-
-    /**
-     * Filter and limit log lines to the most relevant ones for analysis
-     * @param currentLogLine The log line being analyzed
-     * @param allLogLines All available log lines
-     * @param maxLines Maximum number of log lines to return
-     * @returns Array of filtered and limited log lines
-     */
-    private filterRelevantLogs(currentLogLine: string, allLogLines: string[], maxLines: number): string[] {
-        // Find the index of the current log line
-        const currentIndex = allLogLines.indexOf(currentLogLine);
-        if (currentIndex === -1) {
-            return [currentLogLine];
-        }
-
-        // Get surrounding context (prefer more recent logs)
-        const beforeCount = Math.floor(maxLines * 0.3); // 30% before
-        const afterCount = Math.floor(maxLines * 0.7);  // 70% after
-
-        const start = Math.max(0, currentIndex - beforeCount);
-        const end = Math.min(allLogLines.length, currentIndex + afterCount);
-
-        // Get the logs within our window
-        const contextLogs = allLogLines.slice(start, end);
-
-        // If we have room for more logs, try to find similar logs by pattern matching
-        if (contextLogs.length < maxLines) {
-            const remainingSlots = maxLines - contextLogs.length;
-            const patternLogs = this.findSimilarLogs(currentLogLine, allLogLines, contextLogs, remainingSlots);
-            return [...new Set([...contextLogs, ...patternLogs])];
-        }
-
-        return contextLogs;
-    }
-
-    /**
-     * Find logs that have similar patterns to the current log line
-     * @param currentLogLine The log line being analyzed
-     * @param allLogLines All available log lines
-     * @param excludeLogs Logs to exclude from the search
-     * @param maxCount Maximum number of similar logs to return
-     * @returns Array of similar log lines
-     */
-    private findSimilarLogs(currentLogLine: string, allLogLines: string[], excludeLogs: string[], maxCount: number): string[] {
-        // Simple similarity check based on word overlap
-        const currentWords = new Set(currentLogLine.toLowerCase().split(/\s+/));
-
-        return allLogLines
-            .filter(log => !excludeLogs.includes(log)) // Exclude logs we already have
-            .map(log => {
-                const words = log.toLowerCase().split(/\s+/);
-                const overlap = words.filter(word => currentWords.has(word)).length;
-                return { log, similarity: overlap / Math.max(words.length, currentWords.size) };
-            })
-            .sort((a, b) => b.similarity - a.similarity) // Sort by similarity
-            .slice(0, maxCount) // Take top N
-            .map(item => item.log);
     }
 }

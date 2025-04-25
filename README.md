@@ -32,9 +32,22 @@ A VS Code extension that brings telemetry data (traces, logs, and metrics) into 
 
     <img width="376" alt="image" src="https://github.com/user-attachments/assets/681d10f6-d4c3-4478-9bf4-7790b272a050" />
 
-1. Set Claude API Key
+1. Configure LLM Provider (Claude API or Local Ollama)
+
+    You can use either Anthropic's Claude API (requires an API key) or a local Ollama instance.
 
     <img width="609" alt="image" src="https://github.com/user-attachments/assets/da51c800-1393-47e8-b5de-32026ac23938" />
+
+    ### Using Ollama (Local LLM)
+    
+    If you prefer to use a local LLM through Ollama:
+    
+    1. Install Ollama from [ollama.ai](https://ollama.ai)
+    2. Pull a model like Llama 3: `ollama pull llama3`
+    3. Start Ollama (it will run on http://localhost:11434 by default)
+    4. In TraceBack settings, select "Ollama (Local)" as the LLM provider
+    5. Enter the endpoint URL (default: http://localhost:11434)
+    6. Select the model name (default: llama3)
 
 1. Click on a log
 

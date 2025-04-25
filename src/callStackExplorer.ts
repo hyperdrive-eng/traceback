@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { LogEntry, Span } from './logExplorer';
-import { CallerAnalysis } from './claudeService';
-import { ClaudeService } from './claudeService';
+import { CallerAnalysis } from './llmService';
+import { LLMServiceFactory } from './llmService';
 import * as path from 'path';
 import { logLineDecorationType } from './decorations';
 
@@ -143,7 +143,7 @@ export class CallStackExplorerProvider implements vscode.TreeDataProvider<CallSt
 
   private currentLogEntry: LogEntry | undefined;
   private callerAnalysis: CallerNode[] = [];
-  private claudeService: ClaudeService = ClaudeService.getInstance();
+  private llmService = LLMServiceFactory.getInstance().createLLMService();
   private isAnalyzing: boolean = false;
   private callStackCache: Map<string, CallStackCache> = new Map();
 
@@ -428,7 +428,7 @@ export class CallStackExplorerProvider implements vscode.TreeDataProvider<CallSt
         ''
       ).filter(msg => msg);
 
-      const analysis = await this.claudeService.analyzeCallers(
+      const analysis = await this.llmService.analyzeCallers(
         currentLogLine,
         staticSearchString,
         allLogLines,
@@ -565,7 +565,7 @@ export class CallStackExplorerProvider implements vscode.TreeDataProvider<CallSt
           const lineText = document.lineAt(caller.lineNumber).text;
           
           // Analyze callers
-          const analysis = await this.claudeService.analyzeCallers(
+          const analysis = await this.llmService.analyzeCallers(
             lineText,
             lineText,
             [],

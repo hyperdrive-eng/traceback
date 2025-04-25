@@ -82,6 +82,9 @@ export class SettingsView {
           case 'selectRepository':
             await this._selectRepository();
             break;
+          case 'saveLlmSettings':
+            await this._saveLlmSettings(message.provider, message.claudeApiKey, message.ollamaEndpoint, message.ollamaModel);
+            break;
         }
       },
       null,
@@ -230,6 +233,54 @@ export class SettingsView {
       vscode.window.showInformationMessage(`Repository path set to: ${repoPath}`);
     }
   }
+  
+  /**
+   * Save LLM settings
+   */
+  private async _saveLlmSettings(
+    provider: string,
+    claudeApiKey: string,
+    ollamaEndpoint: string,
+    ollamaModel: string
+  ) {
+    try {
+      // Save the LLM provider setting
+      await vscode.workspace.getConfiguration('traceback').update('llmProvider', provider, true);
+
+      // Save Claude API key if provided
+      if (provider === 'claude' && claudeApiKey) {
+        await vscode.workspace.getConfiguration('traceback').update('claudeApiKey', claudeApiKey, true);
+      }
+
+      // Save Ollama settings if provided
+      if (provider === 'ollama') {
+        if (ollamaEndpoint) {
+          await vscode.workspace.getConfiguration('traceback').update('ollamaEndpoint', ollamaEndpoint, true);
+        }
+        
+        if (ollamaModel) {
+          await vscode.workspace.getConfiguration('traceback').update('ollamaModel', ollamaModel, true);
+        }
+      }
+
+      // Force the LLM service to be recreated with the new settings
+      // First, we need to import the factory
+      const { LLMServiceFactory } = require('./llmService');
+      // Then reset the service instance to force recreation
+      LLMServiceFactory.resetServiceInstance();
+
+      // Notify webview of success
+      this._panel.webview.postMessage({
+        command: 'updateStatus',
+        message: `LLM settings saved successfully. Using ${provider === 'claude' ? 'Claude API' : 'local Ollama'}.`
+      });
+
+      // Show confirmation message
+      vscode.window.showInformationMessage(`LLM provider set to: ${provider}`);
+    } catch (error) {
+      vscode.window.showErrorMessage(`Failed to save LLM settings: ${error}`);
+    }
+  }
 
   /**
    * Update webview content
@@ -247,6 +298,12 @@ export class SettingsView {
     const logFilePath = this._extensionContext.globalState.get<string>('logFilePath') || '';
     const axiomDataset = this._extensionContext.globalState.get<string>('axiomDataset') || 'otel-demo-traces';
     const repoPath = this._extensionContext.globalState.get<string>('repoPath') || '';
+    
+    // Get LLM settings
+    const config = vscode.workspace.getConfiguration('traceback');
+    const llmProvider = config.get<string>('llmProvider') || 'claude';
+    const ollamaEndpoint = config.get<string>('ollamaEndpoint') || 'http://localhost:11434';
+    const ollamaModel = config.get<string>('ollamaModel') || 'llama3';
 
     return `<!DOCTYPE html>
     <html lang="en">
@@ -403,6 +460,30 @@ checkout  | {&quot;message&quot;:&quot;service config: \\u0026{productCatalogSvc
           <input type="text" id="axiomQuery" placeholder="5bb959fd715610b1f395edcc344aba6b">
           
           <button id="saveAxiomSettings">Save Settings & Load Trace</button>
+          
+        <h3>LLM Settings</h3>
+          <div class="setting-group">
+            <label for="llmProvider">LLM Provider:</label>
+            <select id="llmProvider">
+              <option value="claude" ${llmProvider === 'claude' ? 'selected' : ''}>Claude</option>
+              <option value="ollama" ${llmProvider === 'ollama' ? 'selected' : ''}>Ollama (Local)</option>
+            </select>
+            
+            <div id="claudeSettings" style="${llmProvider === 'claude' ? '' : 'display: none;'}">
+              <label for="claudeApiKey">Claude API Key:</label>
+              <input type="password" id="claudeApiKey" placeholder="sk-ant-api03-...">
+            </div>
+            
+            <div id="ollamaSettings" style="${llmProvider === 'ollama' ? '' : 'display: none;'}">
+              <label for="ollamaEndpoint">Ollama Endpoint:</label>
+              <input type="text" id="ollamaEndpoint" value="${ollamaEndpoint}" placeholder="http://localhost:11434">
+              
+              <label for="ollamaModel">Ollama Model:</label>
+              <input type="text" id="ollamaModel" value="${ollamaModel}" placeholder="llama3">
+            </div>
+            
+            <button id="saveLlmSettings">Save LLM Settings</button>
+          </div>
       
       <h2>Select Repository</h2>
       
@@ -446,6 +527,28 @@ checkout  | {&quot;message&quot;:&quot;service config: \\u0026{productCatalogSvc
         
         document.getElementById('selectRepo').addEventListener('click', () => {
           vscode.postMessage({ command: 'selectRepository' });
+        });
+        
+        // LLM provider handling
+        document.getElementById('llmProvider').addEventListener('change', function() {
+          const provider = this.value;
+          document.getElementById('claudeSettings').style.display = provider === 'claude' ? 'block' : 'none';
+          document.getElementById('ollamaSettings').style.display = provider === 'ollama' ? 'block' : 'none';
+        });
+        
+        document.getElementById('saveLlmSettings').addEventListener('click', () => {
+          const provider = document.getElementById('llmProvider').value;
+          const claudeApiKey = document.getElementById('claudeApiKey').value;
+          const ollamaEndpoint = document.getElementById('ollamaEndpoint').value;
+          const ollamaModel = document.getElementById('ollamaModel').value;
+          
+          vscode.postMessage({
+            command: 'saveLlmSettings',
+            provider,
+            claudeApiKey,
+            ollamaEndpoint,
+            ollamaModel
+          });
         });
         
         // Clear placeholder when focusing on textarea

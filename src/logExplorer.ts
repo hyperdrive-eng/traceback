@@ -4,7 +4,8 @@ import * as path from 'path';
 import dayjs from 'dayjs';
 import { findCodeLocation, loadLogs } from './processor';
 import { logLineDecorationType, variableValueDecorationType, clearDecorations } from './decorations';
-import { CallerAnalysis, ClaudeService, LLMLogAnalysis } from './claudeService';
+import { CallerAnalysis, LLMLogAnalysis } from './llmService';
+import { LLMServiceFactory } from './llmService';
 
 // Core interfaces for log structure
 export interface Span {
@@ -115,7 +116,7 @@ export class LogExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
       explanation: string;
     }>) => void
   } | undefined;
-  private claudeService: ClaudeService = ClaudeService.getInstance();
+  private llmService = LLMServiceFactory.getInstance().createLLMService();
 
   constructor(context: vscode.ExtensionContext) {
     this.context = context;
@@ -134,7 +135,9 @@ export class LogExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
 
         if (apiKey) {
           try {
-            await this.claudeService.setApiKey(apiKey);
+            await vscode.workspace.getConfiguration('traceback').update('claudeApiKey', apiKey, true);
+            // Recreate the LLM service to use the new API key
+            this.llmService = LLMServiceFactory.getInstance().createLLMService();
             vscode.window.showInformationMessage('Claude API key set successfully');
           } catch (error) {
             vscode.window.showErrorMessage('Failed to set Claude API key');
@@ -497,7 +500,7 @@ export class LogExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
 
           // Analyze the log with Claude
           progress.report({ message: 'Analyzing log message...' });
-          const analysis = await this.claudeService.analyzeLog(logMessage, language);
+          const analysis = await this.llmService.analyzeLog(logMessage, language);
 
           // Update variable explorer with analysis results
           if (this.variableExplorerProvider) {
@@ -577,7 +580,7 @@ export class LogExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
           language = 'unknown';
         }
 
-        analysis = await this.claudeService.analyzeLog(logMessage, language);
+        analysis = await this.llmService.analyzeLog(logMessage, language);
         log.claudeAnalysis = analysis;
       }
 
