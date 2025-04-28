@@ -76,6 +76,9 @@ export class SettingsView {
           case 'loadFromText':
             await this._loadFromText(message.text);
             break;
+          case 'loadRustLogs':
+            await this._loadRustLogs(message.text);
+            break;
           case 'saveAxiomSettings':
             await this._saveAxiomSettings(message.apiKey, message.dataset, message.query);
             break;
@@ -173,6 +176,39 @@ export class SettingsView {
       });
     } catch (error) {
       vscode.window.showErrorMessage(`Failed to process pasted logs: ${error}`);
+    }
+  }
+
+  private async _loadRustLogs(text: string) {
+    if (!text || text.trim().length === 0) {
+      vscode.window.showErrorMessage('Please paste Rust log content first');
+      return;
+    }
+
+    try {
+      // Create a temporary file in the OS temp directory
+      const tempDir = path.join(this._extensionContext.globalStorageUri.fsPath, 'temp');
+      if (!fs.existsSync(tempDir)) {
+        fs.mkdirSync(tempDir, { recursive: true });
+      }
+
+      const tempFilePath = path.join(tempDir, `rust_logs_${Date.now()}.log`);
+      fs.writeFileSync(tempFilePath, text);
+
+      // Set this as the log file path and mark it as Rust format
+      await this._extensionContext.globalState.update('logFilePath', tempFilePath);
+      await this._extensionContext.globalState.update('logFormat', 'rust');
+      
+      // Refresh logs in the explorer
+      vscode.commands.executeCommand('traceback.refreshLogs');
+      
+      // Notify webview of success
+      this._panel.webview.postMessage({ 
+        command: 'updateStatus', 
+        message: 'Loaded Rust logs successfully'
+      });
+    } catch (error) {
+      vscode.window.showErrorMessage(`Failed to process Rust logs: ${error}`);
     }
   }
 
@@ -369,48 +405,57 @@ export class SettingsView {
       
       <h2>Choose Data</h2>
       
-      <h3>Copy/Paste</h3>
-        <label for="logText">Paste log content:</label>
-        <textarea id="logText" class="code-sample" placeholder="checkout  | {&quot;message&quot;:&quot;Initializing new client&quot;,&quot;severity&quot;:&quot;info&quot;,&quot;timestamp&quot;:&quot;2025-04-11T12:35:59.036299716Z&quot;}
-checkout  | {&quot;message&quot;:&quot;ClientID is the default of 'sarama', you should consider setting it to something application-specific.&quot;,&quot;severity&quot;:&quot;info&quot;,&quot;timestamp&quot;:&quot;2025-04-11T12:35:59.037147591Z&quot;}
-checkout  | {&quot;message&quot;:&quot;ClientID is the default of 'sarama', you should consider setting it to something application-specific.&quot;,&quot;severity&quot;:&quot;info&quot;,&quot;timestamp&quot;:&quot;2025-04-11T12:35:59.037198133Z&quot;}
-checkout  | {&quot;message&quot;:&quot;client/metadata fetching metadata for all topics from broker kafka:9092\\n&quot;,&quot;severity&quot;:&quot;info&quot;,&quot;timestamp&quot;:&quot;2025-04-11T12:35:59.039354508Z&quot;}
-checkout  | {&quot;message&quot;:&quot;Connected to broker at kafka:9092 (unregistered)\\n&quot;,&quot;severity&quot;:&quot;info&quot;,&quot;timestamp&quot;:&quot;2025-04-11T12:35:59.045927425Z&quot;}
-checkout  | {&quot;message&quot;:&quot;client/brokers registered new broker #1 at kafka:9092&quot;,&quot;severity&quot;:&quot;info&quot;,&quot;timestamp&quot;:&quot;2025-04-11T12:35:59.067391466Z&quot;}
-checkout  | {&quot;message&quot;:&quot;Successfully initialized new client&quot;,&quot;severity&quot;:&quot;info&quot;,&quot;timestamp&quot;:&quot;2025-04-11T12:35:59.067508841Z&quot;}
-checkout  | {&quot;message&quot;:&quot;service config: \\u0026{productCatalogSvcAddr:product-catalog:3550 cartSvcAddr:cart:7070 currencySvcAddr:currency:7001 shippingSvcAddr:shipping:50050 emailSvcAddr:http://email:6060 paymentSvcAddr:payment:50051 kafkaBrokerSvcAddr:kafka:9092 UnimplementedCheckoutServiceServer:{} KafkaProducerClient:0x400021c100 shippingSvcClient:0x4000402030 productCatalogSvcClient:0x4000402350 cartSvcClient:0x4000402670 currencySvcClient:0x4000402990 emailSvcClient:0x4000402cb0 paymentSvcClient:0x4000402fd0}&quot;,&quot;severity&quot;:&quot;info&quot;,&quot;timestamp&quot;:&quot;2025-04-11T12:35:59.067947175Z&quot;}"></textarea>
-        <button id="loadText">Parse and Load</button>
+      <h3>Rust Logs</h3>
+      <div class="setting-group">
+        <label for="rustLogText">Paste Rust tracing logs:</label>
+        <textarea id="rustLogText" class="code-sample" placeholder="2025-04-03T14:15:13.968281Z  INFO page_service_conn_main{peer_addr=127.0.0.1:60242 application_name=2915355 compute_mode=primary}:process_query{tenant_id=242066e8130a6fff431b8a53c160bdb7 timeline_id=4a5ba23fbb94b79e2bd7fdd36e080b2a}:handle_pagerequests:request:handle_get_page_request{rel=1663/5/16396 blkno=12750 req_lsn=FFFFFFFF/FFFFFFFF shard_id=0000}: handle_get_page_at_lsn_request_batched:tokio_epoll_uring_ext::thread_local_system{thread_local=12 attempt_no=0}: successfully launched system"></textarea>
+        <button id="loadRustText">Parse and Load Rust Logs</button>
+      </div>
 
-        <h3>Public URL</h3>
-          <label for="logUrl">Log URL:</label>
-          <input type="text" id="logUrl" placeholder="https://raw.githubusercontent.com/hyperdrive-eng/playground/refs/heads/main/logs/checkout.log">
-          <button id="loadUrl">Load URL</button>
+      <h3>General Logs</h3>
+      <div class="setting-group">
+        <label for="logText">Paste general log content:</label>
+        <textarea id="logText" class="code-sample" placeholder="checkout  | {&quot;message&quot;:&quot;Initializing new client&quot;,&quot;severity&quot;:&quot;info&quot;,&quot;timestamp&quot;:&quot;2025-04-11T12:35:59.036299716Z&quot;}"></textarea>
+        <button id="loadText">Parse and Load</button>
+      </div>
+
+      <h3>Public URL</h3>
+      <div class="setting-group">
+        <label for="logUrl">Log URL:</label>
+        <input type="text" id="logUrl" placeholder="https://raw.githubusercontent.com/hyperdrive-eng/playground/refs/heads/main/logs/checkout.log">
+        <button id="loadUrl">Load URL</button>
+      </div>
+      
+      <h3>Local File</h3>
+      <div class="setting-group">
+        <button id="selectFile">Select File</button>
+        <div class="current-setting" id="currentLogFile">
+          ${logFilePath ? `Current: ${logFilePath}` : ''}
+        </div>
+      </div>
+      
+      <h3>Axiom</h3>
+      <div class="setting-group">
+        <label for="axiomApiKey">API Key:</label>
+        <input type="password" id="axiomApiKey" placeholder="xapt-01234567-89ab-cdef-0123-456789abcdef">
         
-        <h3>Local File</h3>
-          <button id="selectFile">Select File</button>
-          <div class="current-setting" id="currentLogFile">
-            ${logFilePath ? `Current: ${logFilePath}` : 'No log file selected'}
-          </div>
+        <label for="axiomDataset">Dataset Name:</label>
+        <input type="text" id="axiomDataset" value="${axiomDataset}" placeholder="otel-demo-traces">
         
-        <h3>Axiom</h3>
-          <label for="axiomApiKey">API Key:</label>
-          <input type="password" id="axiomApiKey" placeholder="xapt-01234567-89ab-cdef-0123-456789abcdef">
-          
-          <label for="axiomDataset">Dataset Name:</label>
-          <input type="text" id="axiomDataset" value="${axiomDataset}" placeholder="otel-demo-traces">
-          
-          <label for="axiomQuery">Trace ID:</label>
-          <input type="text" id="axiomQuery" placeholder="5bb959fd715610b1f395edcc344aba6b">
-          
-          <button id="saveAxiomSettings">Save Settings & Load Trace</button>
+        <label for="axiomQuery">Trace ID:</label>
+        <input type="text" id="axiomQuery" placeholder="5bb959fd715610b1f395edcc344aba6b">
+        
+        <button id="saveAxiomSettings">Save Settings & Load Trace</button>
+      </div>
       
       <h2>Select Repository</h2>
-      
+      <div class="setting-group">
         <h3>Local Repository</h3>
-          <button id="selectRepo">Select Repository</button>
-          <div class="current-setting" id="currentRepoPath">
-            ${repoPath ? `Current: ${repoPath}` : 'No repository selected'}
-          </div>
+        <button id="selectRepo">Select Repository</button>
+        <div class="current-setting" id="currentRepoPath">
+          ${repoPath ? `Current: ${repoPath}` : 'No repository selected'}
+        </div>
+      </div>
       
       <div id="statusMessage" class="status"></div>
       
@@ -431,6 +476,11 @@ checkout  | {&quot;message&quot;:&quot;service config: \\u0026{productCatalogSvc
           const text = document.getElementById('logText').value;
           vscode.postMessage({ command: 'loadFromText', text });
         });
+
+        document.getElementById('loadRustText').addEventListener('click', () => {
+          const text = document.getElementById('rustLogText').value;
+          vscode.postMessage({ command: 'loadRustLogs', text });
+        });
         
         document.getElementById('saveAxiomSettings').addEventListener('click', () => {
           const apiKey = document.getElementById('axiomApiKey').value;
@@ -448,18 +498,20 @@ checkout  | {&quot;message&quot;:&quot;service config: \\u0026{productCatalogSvc
           vscode.postMessage({ command: 'selectRepository' });
         });
         
-        // Clear placeholder when focusing on textarea
-        document.getElementById('logText').addEventListener('focus', function() {
-          if (this.placeholder === this.getAttribute('placeholder')) {
-            this.placeholder = '';
-          }
-        });
-        
-        // Restore placeholder when blurring from textarea if empty
-        document.getElementById('logText').addEventListener('blur', function() {
-          if (!this.value) {
-            this.placeholder = this.getAttribute('placeholder');
-          }
+        // Clear placeholder when focusing on textareas
+        ['logText', 'rustLogText'].forEach(id => {
+          const elem = document.getElementById(id);
+          elem.addEventListener('focus', function() {
+            if (this.placeholder === this.getAttribute('placeholder')) {
+              this.placeholder = '';
+            }
+          });
+          
+          elem.addEventListener('blur', function() {
+            if (!this.value) {
+              this.placeholder = this.getAttribute('placeholder');
+            }
+          });
         });
         
         // Handle messages from the extension

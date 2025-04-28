@@ -6,9 +6,14 @@ import { registerCallStackExplorer } from "./callStackExplorer";
 import { ExtensibleLogParser, LogParser } from "./processor";
 import { SettingsView } from "./settingsView";
 import { LogEntry } from "./logExplorer";
+import { SpanVisualizerPanel } from "./spanVisualizerPanel";
+import { RustLogParser } from "./rustLogParser";
 
 // Global registry for log parsers
 export const logParserRegistry = new ExtensibleLogParser();
+
+// Register the Rust log parser
+logParserRegistry.registerParser(new RustLogParser());
 
 export function activate(context: vscode.ExtensionContext) {
   console.log("TraceBack is now active");
@@ -147,6 +152,14 @@ export function activate(context: vscode.ExtensionContext) {
     }
   );
 
+  // Command to get log format
+  const getLogFormatCommand = vscode.commands.registerCommand(
+    "traceback.getLogFormat",
+    () => {
+      return context.globalState.get<string>("logFormat") || "general";
+    }
+  );
+
   // Command to load an Axiom trace
   const loadAxiomTraceCommand = vscode.commands.registerCommand(
     "traceback.loadAxiomTrace",
@@ -242,6 +255,16 @@ export function activate(context: vscode.ExtensionContext) {
     }
   );
 
+  // Add new command to show span visualizer
+  const showSpanVisualizerCommand = vscode.commands.registerCommand(
+    "traceback.showSpanVisualizer",
+    () => {
+      // Get the current logs from the LogExplorerProvider
+      const logs = logExplorerProvider.getLogs();
+      SpanVisualizerPanel.createOrShow(context, logs);
+    }
+  );
+
   context.subscriptions.push(
     treeView,
     openSettingsCommand,
@@ -257,8 +280,10 @@ export function activate(context: vscode.ExtensionContext) {
     storeAxiomTokenCommand,
     getAxiomTokenCommand,
     getAxiomDatasetCommand,
+    getLogFormatCommand,
     registerLogParserCommand,
-    openCallStackLocationCommand
+    openCallStackLocationCommand,
+    showSpanVisualizerCommand
   );
 
   // Initial refresh

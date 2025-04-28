@@ -111,6 +111,11 @@
         "command": "traceback.inspectVariableFromContext",
         "title": "Inspect Value",
         "icon": "$(eye)"
+      },
+      {
+        "command": "traceback.showSpanVisualizer",
+        "title": "Show Span Visualizer",
+        "category": "TraceBack"
       }
     ],
     "viewsContainers": {
@@ -160,6 +165,11 @@
           "command": "traceback.openSettings",
           "when": "view == logExplorer",
           "group": "navigation@3"
+        },
+        {
+          "command": "traceback.showSpanVisualizer",
+          "when": "view == logExplorer",
+          "group": "navigation@4"
         }
       ],
       "view/item/context": [
@@ -181,6 +191,10 @@
       {
         "command": "traceback.openSettings",
         "title": "TraceBack: Open Settings"
+      },
+      {
+        "command": "traceback.showSpanVisualizer",
+        "title": "TraceBack: Show Span Visualizer"
       }
     ]
   },

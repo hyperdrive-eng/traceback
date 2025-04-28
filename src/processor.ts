@@ -6,6 +6,7 @@ import { logLineDecorationType } from './decorations';
 import fetch from 'node-fetch';
 import { Axiom } from '@axiomhq/js';
 import { ClaudeService, RegexPattern } from './claudeService';
+import { RustLogParser } from './rustLogParser';
 
 /**
  * Load trace data from Axiom API
@@ -889,7 +890,6 @@ export class ExtensibleLogParser implements LogParser {
 
 export async function loadLogs(logPathOrUrl: string): Promise<LogEntry[]> {
   try {
-    // Show loading notification
     return await vscode.window.withProgress(
       {
         location: vscode.ProgressLocation.Notification,
@@ -898,22 +898,19 @@ export async function loadLogs(logPathOrUrl: string): Promise<LogEntry[]> {
       },
       async (progress) => {
         if (!logPathOrUrl) {
-          vscode.window.showErrorMessage('Log source is not set.');
+          vscode.window.showErrorMessage('Log file path is not set.');
           return [];
         }
 
         progress.report({ message: 'Reading log file...' });
 
-        // Check if this is an Axiom trace format (indicated by axiom: prefix)
+        let rawContent: string;
+
+        // Handle Axiom traces
         if (logPathOrUrl.startsWith('axiom:')) {
           const traceId = logPathOrUrl.substring(6); // Remove 'axiom:' prefix
           return await loadAxiomTrace(traceId);
-        }
-
-        let rawContent: string;
-
-        // Check if the input is a URL
-        if (logPathOrUrl.startsWith('http://') || logPathOrUrl.startsWith('https://')) {
+        } else if (logPathOrUrl.startsWith('http://') || logPathOrUrl.startsWith('https://')) {
           try {
             progress.report({ message: 'Fetching logs from URL...' });
 
@@ -932,24 +929,36 @@ export async function loadLogs(logPathOrUrl: string): Promise<LogEntry[]> {
             return [];
           }
         } else {
-          // Handle as a local file path
-          if (!fs.existsSync(logPathOrUrl)) {
-            vscode.window.showErrorMessage(`Log file not found at ${logPathOrUrl}`);
+          // Local file
+          try {
+            rawContent = fs.readFileSync(logPathOrUrl, 'utf8');
+          } catch (error) {
+            vscode.window.showErrorMessage(`Failed to read log file: ${error}`);
             return [];
           }
-
-          // Read the file content
-          rawContent = fs.readFileSync(logPathOrUrl, 'utf8');
         }
 
         progress.report({ message: 'Parsing logs...' });
 
         try {
-          // Use the global registry of parsers through extension.ts
-          // We need to dynamically import to avoid circular dependency
+          // Get the log format from global state
+          const logFormat = await vscode.commands.executeCommand('traceback.getLogFormat');
+          
+          // If it's a Rust log format, try the Rust parser first
+          if (logFormat === 'rust') {
+            const rustParser = new RustLogParser();
+            if (rustParser.canParse(rawContent)) {
+              const logs = await rustParser.parse(rawContent);
+              if (logs.length > 0) {
+                vscode.window.showInformationMessage(`Successfully loaded ${logs.length} Rust log entries`);
+                return logs;
+              }
+            }
+          }
+
+          // Fall back to trying all parsers through the registry
           const extensionModule = await import('./extension');
           const parser = extensionModule.logParserRegistry;
-
           const logs = await parser.parse(rawContent);
 
           if (logs.length > 0) {

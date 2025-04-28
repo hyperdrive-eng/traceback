@@ -14,6 +14,39 @@ export interface Span {
   [key: string]: any;
 }
 
+// Rust tracing-specific interfaces
+export interface RustSpanField {
+    name: string;
+    value: string;
+}
+
+export interface RustSpan {
+    name: string;
+    fields: RustSpanField[];
+    child?: RustSpan;  // Each span can have a child span, forming a chain
+}
+
+export interface RustLogEntry {
+    // Core fields from the log
+    timestamp: string;
+    level: 'TRACE' | 'DEBUG' | 'INFO' | 'WARN' | 'ERROR';
+    
+    // Span hierarchy
+    span_root: RustSpan;  // The root span (e.g., 'page_service_conn_main' in the example)
+    
+    // The actual message after the span chain
+    message: string;
+    
+    // Error information if present
+    error?: {
+        kind: string;
+        message: string;
+        os_error?: number;
+    };
+    
+    // Original text for reference
+    raw_text: string;
+}
 
 export interface LogEntry {
   // Common fields for all log types
@@ -832,6 +865,13 @@ export class LogExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
 
       this._onDidChangeTreeData.fire();
     }
+  }
+
+  /**
+   * Get the current logs
+   */
+  public getLogs(): LogEntry[] {
+    return Array.from(this.spanMap.values()).flat();
   }
 }
 
