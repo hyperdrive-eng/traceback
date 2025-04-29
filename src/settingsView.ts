@@ -452,7 +452,7 @@ export class SettingsView {
         input[type="text"], 
         input[type="password"],
         textarea {
-          width: 100%;
+          width: calc(100% - 16px);
           padding: 6px 8px;
           margin-bottom: 10px;
           background-color: var(--vscode-input-background);
