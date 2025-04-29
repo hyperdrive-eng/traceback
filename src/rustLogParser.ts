@@ -20,15 +20,63 @@ export class RustLogParser {
         for (const line of lines) {
             // Strip ANSI escape codes before parsing
             const cleanLine = line.replace(RustLogParser.ANSI_REGEX, '');
+            
+            // First try parsing as JSON
+            const jsonLog = this.parseJsonLogLine(cleanLine);
+            if (jsonLog) {
+                jsonLog.rawText = line; // preserve original line
+                logs.push(jsonLog);
+                continue;
+            }
+
+            // Fall back to regex parsing if not JSON
             const rustLog = this.parseRustLogLine(cleanLine);
             if (rustLog) {
-                // Store the original line with ANSI codes as rawText
                 rustLog.rawText = line;
                 logs.push(rustLog);
             }
         }
 
         return logs;
+    }
+
+    /**
+     * Try to parse a log line as JSON format
+     */
+    private parseJsonLogLine(line: string): RustLogEntry | null {
+        try {
+            const json = JSON.parse(line);
+            
+            // Validate required fields
+            if (!json.timestamp || !json.level || !json.target || !json.fields?.message) {
+                return null;
+            }
+
+            // Convert JSON log to RustLogEntry format
+            return {
+                timestamp: json.timestamp,
+                level: json.level.toUpperCase() as 'TRACE' | 'DEBUG' | 'INFO' | 'WARN' | 'ERROR',
+                target: json.target,
+                message: json.fields.message,
+                span_root: {
+                    name: json.target,
+                    fields: Object.entries(json.fields)
+                        .filter(([key]) => key !== 'message')
+                        .map(([key, value]) => ({
+                            name: key,
+                            value: String(value)
+                        }))
+                },
+                rawText: line,
+                // Optional source location if available
+                source_location: json.filename && json.line_number ? {
+                    file: json.filename,
+                    line: json.line_number
+                } : undefined
+            };
+        } catch (error) {
+            return null;
+        }
     }
 
     private parseRustLogLine(line: string): RustLogEntry | null {
@@ -38,12 +86,14 @@ export class RustLogParser {
             const [_, timestamp, level, target, spanChain, message] = spanMatch;
             try {
                 const span_root = this.parseSpanChain(spanChain);
+                // Extract any module path from the message
+                const cleanMessage = this.stripModulePath(message.trim());
                 return {
                     timestamp,
                     level: level as 'TRACE' | 'DEBUG' | 'INFO' | 'WARN' | 'ERROR',
                     target: target || 'unknown',
                     span_root,
-                    message: message.trim(),
+                    message: cleanMessage,
                     rawText: line,
                 };
             } catch (error) {
@@ -55,6 +105,8 @@ export class RustLogParser {
         const simpleMatch = line.match(RustLogParser.SIMPLE_LOG_REGEX);
         if (simpleMatch) {
             const [_, timestamp, level, target, message] = simpleMatch;
+            // Extract any module path from the message
+            const cleanMessage = this.stripModulePath(message.trim());
             return {
                 timestamp,
                 level: level as 'TRACE' | 'DEBUG' | 'INFO' | 'WARN' | 'ERROR',
@@ -63,12 +115,27 @@ export class RustLogParser {
                     name: target.trim(),
                     fields: []
                 },
-                message: message.trim(),
+                message: cleanMessage,
                 rawText: line,
             };
         }
 
         return null;
+    }
+
+    /**
+     * Strips module paths from the beginning of a message
+     * A module path is something like "crate::module::submodule:" at the start of a message
+     */
+    private stripModulePath(message: string): string {
+        // Only match module paths at the start that are followed by a colon and whitespace
+        // Don't match if it's part of an event name or field value
+        const modulePathMatch = message.match(/^([a-zA-Z0-9_]+(?:::[a-zA-Z0-9_]+)+):\s+/);
+        if (modulePathMatch) {
+            // Return everything after the module path and colon, trimmed
+            return message.substring(modulePathMatch[0].length).trim();
+        }
+        return message;
     }
 
     private parseSpanChain(spanChain: string): RustSpan {

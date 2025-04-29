@@ -28,7 +28,8 @@ describe('RustLogParser', () => {
             value: '[-1ns+18446744073709551615]'
         });
         
-        expect(log.message).toBe('boomerang_runtime::sched: Releasing downstream downstream=EnclaveKey(1) event=TagRelease[enclave=EnclaveKey(2),tag=[-1ns+18446744073709551615]]');
+        // Message should not include the module path prefix but preserve event data
+        expect(log.message).toBe('Releasing downstream downstream=EnclaveKey(1) event=TagRelease[enclave=EnclaveKey(2),tag=[-1ns+18446744073709551615]]');
     });
 
     test('parses log lines with ANSI color codes', async () => {
@@ -40,11 +41,27 @@ describe('RustLogParser', () => {
         const log = logs[0];
         expect(log.timestamp).toBe('2025-04-20T03:16:50.160295Z');
         expect(log.level).toBe('INFO');
+        expect(log.target).toBe('boomerang_builder::env::build');
         expect(log.span_root.name).toBe('boomerang_builder::env::build');
+        // Message should preserve module paths that are part of the actual message
         expect(log.message).toBe('Action enclave_cycle::__shutdown is unused, won\'t build');
         
         // Original text with ANSI codes should be preserved
         expect(log.rawText).toBe(logLine);
+    });
+
+    test('parses simple log with module path in message', async () => {
+        const logLine = '2025-04-20T03:16:50.160355Z  INFO boomerang_builder::env::build: Action enclave_cycle::con_reactor_src::__startup is unused, won\'t build';
+        
+        const logs = await parser.parse(logLine);
+        expect(logs).toHaveLength(1);
+        
+        const log = logs[0];
+        expect(log.timestamp).toBe('2025-04-20T03:16:50.160355Z');
+        expect(log.level).toBe('INFO');
+        expect(log.target).toBe('boomerang_builder::env::build');
+        // Message should preserve module paths that are part of the actual message
+        expect(log.message).toBe('Action enclave_cycle::con_reactor_src::__startup is unused, won\'t build');
     });
 
     test('parses Neon log format with multiple fields', async () => {
@@ -76,5 +93,57 @@ describe('RustLogParser', () => {
         });
         
         expect(log.message).toBe('error flushing buffered writer buffer to disk, retrying after backoff err=Operation canceled (os error 125)');
+    });
+
+    test('parses JSON format log', async () => {
+        const logLine = '{"timestamp":"2025-04-23T11:40:40.926094Z","level":"INFO","fields":{"message":"Action enclave_cycle::__startup is unused, won\'t build"},"target":"boomerang_builder::env::build","filename":"boomerang_builder/src/env/build.rs","line_number":244}';
+        
+        const logs = await parser.parse(logLine);
+        expect(logs).toHaveLength(1);
+        
+        const log = logs[0];
+        expect(log.timestamp).toBe('2025-04-23T11:40:40.926094Z');
+        expect(log.level).toBe('INFO');
+        expect(log.target).toBe('boomerang_builder::env::build');
+        expect(log.message).toBe('Action enclave_cycle::__startup is unused, won\'t build');
+        expect(log.rawText).toBe(logLine);
+    });
+
+    test('parses JSON format log with additional fields', async () => {
+        const logLine = '{"timestamp":"2025-04-23T11:40:40.926094Z","level":"INFO","fields":{"message":"Processing request","request_id":"123","user":"alice"},"target":"api::handler"}';
+        
+        const logs = await parser.parse(logLine);
+        expect(logs).toHaveLength(1);
+        
+        const log = logs[0];
+        expect(log.timestamp).toBe('2025-04-23T11:40:40.926094Z');
+        expect(log.level).toBe('INFO');
+        expect(log.target).toBe('api::handler');
+        expect(log.message).toBe('Processing request');
+        
+        // Additional fields should be captured in span_root.fields
+        expect(log.span_root.fields).toHaveLength(2);
+        expect(log.span_root.fields).toContainEqual({ name: 'request_id', value: '123' });
+        expect(log.span_root.fields).toContainEqual({ name: 'user', value: 'alice' });
+    });
+
+    test('parses JSON format log with source location', async () => {
+        const logLine = '{"timestamp":"2025-04-23T11:40:40.926094Z","level":"INFO","fields":{"message":"Releasing downstream downstream=EnclaveKey(1) event=TagRelease[enclave=EnclaveKey(2),tag=[-1ns+18446744073709551615]]"},"target":"boomerang_runtime::sched","filename":"boomerang_runtime/src/sched.rs","line_number":244}';
+        
+        const logs = await parser.parse(logLine);
+        expect(logs).toHaveLength(1);
+        
+        const log = logs[0];
+        expect(log.timestamp).toBe('2025-04-23T11:40:40.926094Z');
+        expect(log.level).toBe('INFO');
+        expect(log.target).toBe('boomerang_runtime::sched');
+        expect(log.message).toBe('Releasing downstream downstream=EnclaveKey(1) event=TagRelease[enclave=EnclaveKey(2),tag=[-1ns+18446744073709551615]]');
+        
+        // Verify source location is parsed correctly
+        expect(log.source_location).toBeDefined();
+        expect(log.source_location).toEqual({
+            file: 'boomerang_runtime/src/sched.rs',
+            line: 244
+        });
     });
 }); 

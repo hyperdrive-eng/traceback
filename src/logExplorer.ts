@@ -56,6 +56,10 @@ export interface RustLogEntry extends BaseLogEntry {
     
     // Span information
     span_root: RustSpan;
+    source_location?: {
+        file: string;
+        line: number;
+    };
 }
 
 export interface Span {
@@ -558,6 +562,7 @@ export class LogExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
     if (!searchString) {
         throw new Error('Could not determine search string from log');
     }
+    console.log(`Searching for exact string: "${searchString}"`);
 
     // Search only in Rust files
     const searchResults = await vscode.workspace.findFiles(
@@ -565,8 +570,10 @@ export class LogExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
         '**/target/**'      // Exclude target directory
     );
 
-    let bestMatch = { file: '', line: 0, score: 0 };
+    let matches: Array<{ file: string, line: number }> = [];
+    let searchAttempted = `"${searchString}"`; // Keep track for error message
 
+    // --- Initial Search --- 
     for (const file of searchResults) {
         const relativePath = path.relative(repoPath, file.fsPath);
         const content = await vscode.workspace.fs.readFile(file);
@@ -574,45 +581,113 @@ export class LogExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
 
         for (let i = 0; i < lines.length; i++) {
             const line = lines[i];
-            const score = this.calculateMatchScore(line, searchString);
-            if (score > bestMatch.score) {
-                bestMatch = {
+            if (line.includes(searchString)) {
+                console.log(`Found initial match in ${relativePath}:${i}`);
+                matches.push({
                     file: relativePath,
                     line: i,
-                    score: score
-                };
+                });
             }
         }
     }
 
-    if (bestMatch.score === 0) {
-        throw new Error('Could not find source location');
+    // --- Fallback Search with Variants --- 
+    if (matches.length === 0) {
+        console.log(`Initial search for "${searchString}" failed. Trying variants...`);
+        const variants = this.generateSearchVariants(searchString);
+        searchAttempted = `"${searchString}" or its variants`;
+
+        if (variants.length > 0) {
+            console.log('Generated variants:', variants);
+            for (const file of searchResults) {
+                const relativePath = path.relative(repoPath, file.fsPath);
+                // Re-read file content or cache it? Re-reading is simpler for now.
+                const content = await vscode.workspace.fs.readFile(file);
+                const lines = Buffer.from(content).toString('utf8').split('\n');
+                
+                for (let i = 0; i < lines.length; i++) {
+                    const line = lines[i];
+                    // Check if this line already matched the original string (shouldn't happen if matches.length === 0, but safety check)
+                    if (matches.some(m => m.file === relativePath && m.line === i)) continue;
+
+                    for (const variant of variants) {
+                        if (line.includes(variant)) {
+                            console.log(`Found variant "${variant}" in ${relativePath}:${i}`);
+                            matches.push({
+                                file: relativePath,
+                                line: i,
+                            });
+                            // Found a match for this line, no need to check other variants for it
+                            break; 
+                        }
+                    }
+                }
+            }
+        } else {
+            console.log('No variants generated.');
+        }
     }
 
+    // --- Process Matches --- 
+    if (matches.length === 0) {
+        throw new Error(`Could not find source location for ${searchAttempted}`);
+    }
+
+    // Prioritize matches where the file path contains the log target, if available
+    if (log.target) {
+      const targetLower = log.target.toLowerCase();
+      const prioritizedMatch = matches.find(match => 
+        match.file.toLowerCase().includes(targetLower)
+      );
+      if (prioritizedMatch) {
+        console.log(`Prioritized match found in ${prioritizedMatch.file} based on target "${log.target}"`);
+        return {
+            file: prioritizedMatch.file,
+            line: prioritizedMatch.line,
+            lastUpdated: new Date().toISOString()
+        };
+      } else {
+        console.log(`No match found containing target "${log.target}". Using first overall match.`);
+      }
+    } else {
+        console.log(`No log target provided. Using first overall match.`);
+    }
+
+    // If no target-based prioritization or no target, return the first match found
+    const firstMatch = matches[0];
     return {
-        file: bestMatch.file,
-        line: bestMatch.line,
+        file: firstMatch.file,
+        line: firstMatch.line,
         lastUpdated: new Date().toISOString()
     };
   }
 
-  private calculateMatchScore(line: string, searchString: string): number {
-    // Remove comments and whitespace
-    const cleanLine = line.replace(/\/\/.*$/, '').trim();
-    const cleanSearch = searchString.trim();
+  /**
+   * Generates variations of a search string by removing words from the start and end.
+   */
+  private generateSearchVariants(searchString: string): string[] {
+    const words = searchString.trim().split(/\s+/);
+    const variants = new Set<string>();
 
-    // Basic scoring: count matching words
-    const lineWords = new Set(cleanLine.toLowerCase().split(/\W+/));
-    const searchWords = cleanSearch.toLowerCase().split(/\W+/);
-    
-    let score = 0;
-    for (const word of searchWords) {
-        if (lineWords.has(word)) {
-            score += 1;
-        }
+    if (words.length > 1) {
+      // Remove first word
+      variants.add(words.slice(1).join(' '));
+      // Remove last word
+      variants.add(words.slice(0, -1).join(' '));
+    }
+    if (words.length > 2) {
+      // Remove first two words
+      variants.add(words.slice(2).join(' '));
+      // Remove last two words
+      variants.add(words.slice(0, -2).join(' '));
+    }
+    if (words.length > 3) {
+      // Remove first and last word
+      variants.add(words.slice(1, -1).join(' '));
     }
 
-    return score;
+    // Return unique, non-empty variants
+    return Array.from(variants).filter(v => v.length > 0);
   }
 
   /**
