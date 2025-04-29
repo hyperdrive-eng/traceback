@@ -48,16 +48,16 @@ export class SettingsView {
     this._extensionContext = context;
 
     // Initial content
-    this._update();
+    this._update().catch(err => console.error('Error updating settings view:', err));
 
     // Listen for when the panel is disposed
     this._panel.onDidDispose(() => this.dispose(), null, this._disposables);
 
     // Update the content when the view changes
     this._panel.onDidChangeViewState(
-      e => {
+      async e => {
         if (this._panel.visible) {
-          this._update();
+          await this._update();
         }
       },
       null,
@@ -82,6 +82,9 @@ export class SettingsView {
             break;
           case 'saveAxiomSettings':
             await this._saveAxiomSettings(message.apiKey, message.dataset, message.query);
+            break;
+          case 'saveClaudeApiKey':
+            await this._saveClaudeApiKey(message.apiKey);
             break;
           case 'selectRepository':
             await this._selectRepository();
@@ -302,6 +305,42 @@ export class SettingsView {
       });
     }
   }
+  
+  /**
+   * Save Claude API key to workspace configuration
+   */
+  private async _saveClaudeApiKey(apiKey: string) {
+    if (!apiKey || apiKey.trim().length === 0) {
+      vscode.window.showWarningMessage('Please enter a valid Claude API key');
+      return;
+    }
+    
+    try {
+      // Store the API key in the secure storage
+      await vscode.workspace.getConfiguration('traceback').update('claudeApiKey', apiKey, true);
+      
+      // Also update the ClaudeService instance
+      const claudeService = (await import('./claudeService')).ClaudeService.getInstance();
+      await claudeService.setApiKey(apiKey);
+      
+      // Notify webview of success
+      this._panel.webview.postMessage({ 
+        command: 'updateStatus', 
+        message: 'Claude API key saved successfully'
+      });
+      
+      // Update the API key input field placeholder to indicate it's set
+      this._panel.webview.postMessage({
+        command: 'updateClaudeApiKey',
+        isSet: true
+      });
+      
+      vscode.window.showInformationMessage('Claude API key saved successfully');
+    } catch (error) {
+      console.error('Error saving Claude API key:', error);
+      vscode.window.showErrorMessage(`Failed to save Claude API key: ${error}`);
+    }
+  }
 
   /**
    * Handle repository selection
@@ -333,9 +372,27 @@ export class SettingsView {
   /**
    * Update webview content
    */
-  private _update() {
+  private async _update() {
     this._panel.title = 'TraceBack Settings';
+    
+    // Check if Claude API key is set
+    const config = vscode.workspace.getConfiguration('traceback');
+    const claudeApiKey = config.get('claudeApiKey');
+    const isApiKeySet = !!claudeApiKey;
+    
+    // Store the state so we can use it in the HTML template
+    await this._extensionContext.workspaceState.update('claudeApiKeySet', isApiKeySet);
+    
+    // Generate and set the webview HTML
     this._panel.webview.html = this._getHtmlForWebview();
+    
+    // Update the Claude API key status in the webview after it's loaded
+    setTimeout(() => {
+      this._panel.webview.postMessage({
+        command: 'updateClaudeApiKey',
+        isSet: isApiKeySet
+      });
+    }, 500);
   }
 
   /**
@@ -465,7 +522,7 @@ export class SettingsView {
         <h1>TraceBack Settings</h1>
       </header>
       
-      <h2>Choose Data Source</h2>
+      <h2>1. Choose Data Source</h2>
       
       <div class="setting-group">
         <h3>Paste Rust Logs</h3>
@@ -482,11 +539,23 @@ export class SettingsView {
         </div>
       </div>
       
-      <h2>Select Repository</h2>
+      <h2>2. Select Repository</h2>
       <div class="setting-group">
         <button id="selectRepo">Select Repository</button>
         <div class="current-setting" id="currentRepoPath">
           ${repoPath ? `Current: ${repoPath}` : 'No repository selected'}
+        </div>
+      </div>
+
+      <h2>3. Add API key</h2>
+      <div class="setting-group">
+        <div id="claudeSettings">
+          <label for="claudeApiKey">Claude API Key:</label>
+          <input type="password" id="claudeApiKey" placeholder="sk-ant-api03-...">
+          <button id="saveClaudeApiKey">Save API Key</button>
+          <div class="current-setting" id="claudeApiKeyStatus">
+            ${this._extensionContext.workspaceState.get('claudeApiKeySet') ? 'API key is set' : 'No API key set'}
+          </div>
         </div>
       </div>
       
@@ -525,6 +594,17 @@ export class SettingsView {
         document.getElementById('selectRepo').addEventListener('click', () => {
           vscode.postMessage({ command: 'selectRepository' });
         });
+
+        document.getElementById('saveClaudeApiKey').addEventListener('click', () => {
+          const apiKey = document.getElementById('claudeApiKey').value;
+          if (!apiKey) {
+            showStatus('Please enter a Claude API key');
+            return;
+          }
+          vscode.postMessage({ command: 'saveClaudeApiKey', apiKey });
+          // Clear the input field after sending
+          document.getElementById('claudeApiKey').value = '';
+        });
         
         // Clear placeholder when focusing on textarea
         const rustLogText = document.getElementById('rustLogText');
@@ -550,6 +630,16 @@ export class SettingsView {
               break;
             case 'updateStatus':
               showStatus(message.message);
+              break;
+            case 'updateClaudeApiKey':
+              const apiKeyInput = document.getElementById('claudeApiKey');
+              if (message.isSet) {
+                apiKeyInput.placeholder = '********** (API key is set)';
+                document.getElementById('claudeApiKeyStatus').textContent = 'API key is set';
+              } else {
+                apiKeyInput.placeholder = 'sk-ant-api03-...';
+                document.getElementById('claudeApiKeyStatus').textContent = 'No API key set';
+              }
               break;
           }
         });
