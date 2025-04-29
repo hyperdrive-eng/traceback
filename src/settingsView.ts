@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
+import { loadLogs } from './processor';
 
 /**
  * Settings webview panel for managing traceback extension settings
@@ -76,6 +77,9 @@ export class SettingsView {
           case 'loadFromText':
             await this._loadFromText(message.text);
             break;
+          case 'loadRustLogs':
+            await this._loadRustLogs(message.text);
+            break;
           case 'saveAxiomSettings':
             await this._saveAxiomSettings(message.apiKey, message.dataset, message.query);
             break;
@@ -107,16 +111,25 @@ export class SettingsView {
     const fileUri = await vscode.window.showOpenDialog(options);
     if (fileUri && fileUri[0]) {
       const logPath = fileUri[0].fsPath;
-      await this._extensionContext.globalState.update('logFilePath', logPath);
-      
-      // Refresh logs in the explorer
-      vscode.commands.executeCommand('traceback.refreshLogs');
-      
-      // Notify webview about the change
-      this._panel.webview.postMessage({ 
-        command: 'updateLogFilePath', 
-        path: logPath
-      });
+      try {
+        // Read the file content
+        const content = fs.readFileSync(logPath, 'utf8');
+        
+        // Save both the file path and content
+        await this._extensionContext.globalState.update('logFilePath', logPath);
+        await this._extensionContext.globalState.update('logContent', content);
+        
+        // Refresh logs in the explorer
+        vscode.commands.executeCommand('traceback.refreshLogs');
+        
+        // Notify webview about the change
+        this._panel.webview.postMessage({ 
+          command: 'updateLogFilePath', 
+          path: logPath
+        });
+      } catch (error) {
+        vscode.window.showErrorMessage(`Failed to read log file: ${error}`);
+      }
     }
   }
 
@@ -160,8 +173,9 @@ export class SettingsView {
       const tempFilePath = path.join(tempDir, `pasted_logs_${Date.now()}.log`);
       fs.writeFileSync(tempFilePath, text);
 
-      // Set this as the log file path
+      // Save both the file path and content
       await this._extensionContext.globalState.update('logFilePath', tempFilePath);
+      await this._extensionContext.globalState.update('logContent', text);
       
       // Refresh logs in the explorer
       vscode.commands.executeCommand('traceback.refreshLogs');
@@ -173,6 +187,91 @@ export class SettingsView {
       });
     } catch (error) {
       vscode.window.showErrorMessage(`Failed to process pasted logs: ${error}`);
+    }
+  }
+
+  private async _loadRustLogs(text: string) {
+    if (!text || text.trim().length === 0) {
+      vscode.window.showErrorMessage('Please paste Rust log content first');
+      return;
+    }
+
+    try {
+      console.log('Processing Rust logs...');
+      
+      // First parse the logs to validate them
+      const logs = await loadLogs(text);
+      if (!logs || logs.length === 0) {
+        vscode.window.showErrorMessage('No valid Rust logs found in the content');
+        return;
+      }
+      
+      // Create a temporary file in the OS temp directory
+      const tempDir = path.join(this._extensionContext.globalStorageUri.fsPath, 'temp');
+      console.log('Temp directory:', tempDir);
+      
+      if (!fs.existsSync(tempDir)) {
+        console.log('Creating temp directory...');
+        fs.mkdirSync(tempDir, { recursive: true });
+      }
+
+      const tempFilePath = path.join(tempDir, `rust_logs_${Date.now()}.log`);
+      console.log('Writing to temp file:', tempFilePath);
+      
+      // Split the text into lines and process each line
+      const lines = text.split('\n');
+      const processedLines = lines.map(line => {
+        // Skip empty lines
+        if (!line.trim()) return '';
+        
+        // Check if it's already in the right format
+        if (line.match(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/)) {
+          return line;
+        }
+        
+        // Convert Python-style timestamp to ISO format
+        const match = line.match(/^(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\.\d{3})\s+(INFO|WARN|ERROR|DEBUG)\s+\[([^\]]+)\]\s+(.+)$/);
+        if (match) {
+          const [_, timestamp, level, source, message] = match;
+          // Convert space to T in timestamp
+          const isoTimestamp = timestamp.replace(' ', 'T');
+          return `${isoTimestamp}Z  ${level} ${source}: ${message}`;
+        }
+        
+        return line;
+      }).join('\n');
+
+      // Ensure the text ends with a newline
+      const normalizedText = processedLines.endsWith('\n') ? processedLines : processedLines + '\n';
+      fs.writeFileSync(tempFilePath, normalizedText);
+
+      console.log('Setting global state...');
+      // Save both the file path and content
+      await this._extensionContext.globalState.update('logFilePath', tempFilePath);
+      await this._extensionContext.globalState.update('logContent', normalizedText);
+      await this._extensionContext.globalState.update('logFormat', 'rust');
+      
+      // Show success message to user
+      vscode.window.showInformationMessage('Rust logs loaded successfully');
+      
+      // Refresh logs in the explorer
+      console.log('Refreshing logs...');
+      await vscode.commands.executeCommand('traceback.refreshLogs');
+      
+      // Notify webview of success
+      this._panel.webview.postMessage({ 
+        command: 'updateStatus', 
+        message: 'Loaded Rust logs successfully'
+      });
+
+      // Update the current file path display
+      this._panel.webview.postMessage({
+        command: 'updateLogFilePath',
+        path: tempFilePath
+      });
+    } catch (error) {
+      console.error('Error processing Rust logs:', error);
+      vscode.window.showErrorMessage(`Failed to process Rust logs: ${error}`);
     }
   }
 
@@ -245,7 +344,6 @@ export class SettingsView {
   private _getHtmlForWebview() {
     // Get current settings
     const logFilePath = this._extensionContext.globalState.get<string>('logFilePath') || '';
-    const axiomDataset = this._extensionContext.globalState.get<string>('axiomDataset') || 'otel-demo-traces';
     const repoPath = this._extensionContext.globalState.get<string>('repoPath') || '';
 
     return `<!DOCTYPE html>
@@ -367,50 +465,30 @@ export class SettingsView {
         <h1>TraceBack Settings</h1>
       </header>
       
-      <h2>Choose Data</h2>
+      <h2>Choose Data Source</h2>
       
-      <h3>Copy/Paste</h3>
-        <label for="logText">Paste log content:</label>
-        <textarea id="logText" class="code-sample" placeholder="checkout  | {&quot;message&quot;:&quot;Initializing new client&quot;,&quot;severity&quot;:&quot;info&quot;,&quot;timestamp&quot;:&quot;2025-04-11T12:35:59.036299716Z&quot;}
-checkout  | {&quot;message&quot;:&quot;ClientID is the default of 'sarama', you should consider setting it to something application-specific.&quot;,&quot;severity&quot;:&quot;info&quot;,&quot;timestamp&quot;:&quot;2025-04-11T12:35:59.037147591Z&quot;}
-checkout  | {&quot;message&quot;:&quot;ClientID is the default of 'sarama', you should consider setting it to something application-specific.&quot;,&quot;severity&quot;:&quot;info&quot;,&quot;timestamp&quot;:&quot;2025-04-11T12:35:59.037198133Z&quot;}
-checkout  | {&quot;message&quot;:&quot;client/metadata fetching metadata for all topics from broker kafka:9092\\n&quot;,&quot;severity&quot;:&quot;info&quot;,&quot;timestamp&quot;:&quot;2025-04-11T12:35:59.039354508Z&quot;}
-checkout  | {&quot;message&quot;:&quot;Connected to broker at kafka:9092 (unregistered)\\n&quot;,&quot;severity&quot;:&quot;info&quot;,&quot;timestamp&quot;:&quot;2025-04-11T12:35:59.045927425Z&quot;}
-checkout  | {&quot;message&quot;:&quot;client/brokers registered new broker #1 at kafka:9092&quot;,&quot;severity&quot;:&quot;info&quot;,&quot;timestamp&quot;:&quot;2025-04-11T12:35:59.067391466Z&quot;}
-checkout  | {&quot;message&quot;:&quot;Successfully initialized new client&quot;,&quot;severity&quot;:&quot;info&quot;,&quot;timestamp&quot;:&quot;2025-04-11T12:35:59.067508841Z&quot;}
-checkout  | {&quot;message&quot;:&quot;service config: \\u0026{productCatalogSvcAddr:product-catalog:3550 cartSvcAddr:cart:7070 currencySvcAddr:currency:7001 shippingSvcAddr:shipping:50050 emailSvcAddr:http://email:6060 paymentSvcAddr:payment:50051 kafkaBrokerSvcAddr:kafka:9092 UnimplementedCheckoutServiceServer:{} KafkaProducerClient:0x400021c100 shippingSvcClient:0x4000402030 productCatalogSvcClient:0x4000402350 cartSvcClient:0x4000402670 currencySvcClient:0x4000402990 emailSvcClient:0x4000402cb0 paymentSvcClient:0x4000402fd0}&quot;,&quot;severity&quot;:&quot;info&quot;,&quot;timestamp&quot;:&quot;2025-04-11T12:35:59.067947175Z&quot;}"></textarea>
-        <button id="loadText">Parse and Load</button>
+      <div class="setting-group">
+        <h3>Paste Rust Logs</h3>
+        <label for="rustLogText">Paste Rust tracing logs:</label>
+        <textarea id="rustLogText" class="code-sample" placeholder="2025-04-03T14:15:13.968281Z  INFO page_service_conn_main{peer_addr=127.0.0.1:60242 application_name=2915355 compute_mode=primary}:process_query{tenant_id=242066e8130a6fff431b8a53c160bdb7 timeline_id=4a5ba23fbb94b79e2bd7fdd36e080b2a}:handle_pagerequests:request:handle_get_page_request{rel=1663/5/16396 blkno=12750 req_lsn=FFFFFFFF/FFFFFFFF shard_id=0000}: handle_get_page_at_lsn_request_batched:tokio_epoll_uring_ext::thread_local_system{thread_local=12 attempt_no=0}: successfully launched system"></textarea>
+        <button id="loadRustText">Parse and Load</button>
+      </div>
 
-        <h3>Public URL</h3>
-          <label for="logUrl">Log URL:</label>
-          <input type="text" id="logUrl" placeholder="https://raw.githubusercontent.com/hyperdrive-eng/playground/refs/heads/main/logs/checkout.log">
-          <button id="loadUrl">Load URL</button>
-        
-        <h3>Local File</h3>
-          <button id="selectFile">Select File</button>
-          <div class="current-setting" id="currentLogFile">
-            ${logFilePath ? `Current: ${logFilePath}` : 'No log file selected'}
-          </div>
-        
-        <h3>Axiom</h3>
-          <label for="axiomApiKey">API Key:</label>
-          <input type="password" id="axiomApiKey" placeholder="xapt-01234567-89ab-cdef-0123-456789abcdef">
-          
-          <label for="axiomDataset">Dataset Name:</label>
-          <input type="text" id="axiomDataset" value="${axiomDataset}" placeholder="otel-demo-traces">
-          
-          <label for="axiomQuery">Trace ID:</label>
-          <input type="text" id="axiomQuery" placeholder="5bb959fd715610b1f395edcc344aba6b">
-          
-          <button id="saveAxiomSettings">Save Settings & Load Trace</button>
+      <div class="setting-group">
+        <h3>Upload Log File</h3>
+        <button id="selectFile">Select File</button>
+        <div class="current-setting" id="currentLogFile">
+          ${logFilePath ? `Current: ${logFilePath}` : 'No file selected'}
+        </div>
+      </div>
       
       <h2>Select Repository</h2>
-      
-        <h3>Local Repository</h3>
-          <button id="selectRepo">Select Repository</button>
-          <div class="current-setting" id="currentRepoPath">
-            ${repoPath ? `Current: ${repoPath}` : 'No repository selected'}
-          </div>
+      <div class="setting-group">
+        <button id="selectRepo">Select Repository</button>
+        <div class="current-setting" id="currentRepoPath">
+          ${repoPath ? `Current: ${repoPath}` : 'No repository selected'}
+        </div>
+      </div>
       
       <div id="statusMessage" class="status"></div>
       
@@ -422,26 +500,26 @@ checkout  | {&quot;message&quot;:&quot;service config: \\u0026{productCatalogSvc
           vscode.postMessage({ command: 'selectLogFile' });
         });
         
-        document.getElementById('loadUrl').addEventListener('click', () => {
-          const url = document.getElementById('logUrl').value;
-          vscode.postMessage({ command: 'loadFromUrl', url });
-        });
-        
-        document.getElementById('loadText').addEventListener('click', () => {
-          const text = document.getElementById('logText').value;
-          vscode.postMessage({ command: 'loadFromText', text });
-        });
-        
-        document.getElementById('saveAxiomSettings').addEventListener('click', () => {
-          const apiKey = document.getElementById('axiomApiKey').value;
-          const dataset = document.getElementById('axiomDataset').value;
-          const query = document.getElementById('axiomQuery').value;
-          vscode.postMessage({ 
-            command: 'saveAxiomSettings', 
-            apiKey, 
-            dataset, 
-            query 
-          });
+        document.getElementById('loadRustText').addEventListener('click', () => {
+          try {
+            const textarea = document.getElementById('rustLogText');
+            const text = textarea.value;
+            
+            if (!text || text.trim().length === 0) {
+              showStatus('Please paste Rust log content first');
+              return;
+            }
+            
+            console.log('Sending Rust logs to extension...');
+            vscode.postMessage({ command: 'loadRustLogs', text });
+            
+            // Clear the textarea after successful send
+            textarea.value = '';
+            showStatus('Processing Rust logs...');
+          } catch (error) {
+            console.error('Error sending Rust logs:', error);
+            showStatus('Error sending Rust logs: ' + error.message);
+          }
         });
         
         document.getElementById('selectRepo').addEventListener('click', () => {
@@ -449,14 +527,14 @@ checkout  | {&quot;message&quot;:&quot;service config: \\u0026{productCatalogSvc
         });
         
         // Clear placeholder when focusing on textarea
-        document.getElementById('logText').addEventListener('focus', function() {
+        const rustLogText = document.getElementById('rustLogText');
+        rustLogText.addEventListener('focus', function() {
           if (this.placeholder === this.getAttribute('placeholder')) {
             this.placeholder = '';
           }
         });
         
-        // Restore placeholder when blurring from textarea if empty
-        document.getElementById('logText').addEventListener('blur', function() {
+        rustLogText.addEventListener('blur', function() {
           if (!this.value) {
             this.placeholder = this.getAttribute('placeholder');
           }

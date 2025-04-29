@@ -1,18 +1,14 @@
 import * as vscode from "vscode";
-import { LogExplorerProvider, LogTreeItem } from "./logExplorer";
+import { LogExplorerProvider } from "./logExplorer";
 import { registerVariableExplorer } from "./variableExplorer";
 import { VariableDecorator } from "./variableDecorator";
 import { registerCallStackExplorer } from "./callStackExplorer";
-import { ExtensibleLogParser, LogParser } from "./processor";
+import { SpanVisualizerPanel } from "./spanVisualizerPanel";
 import { SettingsView } from "./settingsView";
-import { LogEntry } from "./logExplorer";
-
-// Global registry for log parsers
-export const logParserRegistry = new ExtensibleLogParser();
 
 export function activate(context: vscode.ExtensionContext) {
   console.log("TraceBack is now active");
-  
+
   const updateStatusBars = () => {};
 
   // Create other providers
@@ -122,111 +118,6 @@ export function activate(context: vscode.ExtensionContext) {
     }
   );
 
-
-  // Command to store Axiom API token securely
-  const storeAxiomTokenCommand = vscode.commands.registerCommand(
-    "traceback.storeAxiomToken",
-    async (token: string) => {
-      await context.secrets.store("axiom-token", token);
-    }
-  );
-
-  // Command to get stored Axiom API token
-  const getAxiomTokenCommand = vscode.commands.registerCommand(
-    "traceback.getAxiomToken",
-    async () => {
-      return context.secrets.get("axiom-token");
-    }
-  );
-
-  // Command to get Axiom dataset name
-  const getAxiomDatasetCommand = vscode.commands.registerCommand(
-    "traceback.getAxiomDataset",
-    () => {
-      return context.globalState.get<string>("axiomDataset") || "otel-demo-traces";
-    }
-  );
-
-  // Command to load an Axiom trace
-  const loadAxiomTraceCommand = vscode.commands.registerCommand(
-    "traceback.loadAxiomTrace",
-    async () => {
-      // Ask for the trace ID
-      const traceId = await vscode.window.showInputBox({
-        prompt: "Enter Axiom trace ID",
-        placeHolder: "5bb959fd715610b1f395edcc344aba6b",
-        validateInput: (value) => {
-          // Simple validation for non-empty input
-          return value.trim() ? null : "Trace ID cannot be empty";
-        }
-      });
-
-      if (!traceId) {
-        // User canceled
-        return;
-      }
-
-      // Store the trace ID
-      await context.globalState.update("axiomTraceId", traceId);
-      await context.globalState.update("logFilePath", `axiom:${traceId}`);
-
-      // Update status bars and refresh logs
-      updateStatusBars();
-      logExplorerProvider.refresh();
-
-      // Show information message
-      vscode.window.showInformationMessage(`Loading Axiom trace: ${traceId}`);
-    }
-  );
-
-  // Command to set Axiom dataset name
-  const setAxiomDatasetCommand = vscode.commands.registerCommand(
-    "traceback.setAxiomDataset",
-    async () => {
-      const currentDataset = context.globalState.get<string>("axiomDataset") || "otel-demo-traces";
-
-      const newDataset = await vscode.window.showInputBox({
-        prompt: "Enter Axiom dataset name for traces",
-        placeHolder: "otel-demo-traces",
-        value: currentDataset
-      });
-
-      if (newDataset) {
-        await context.globalState.update("axiomDataset", newDataset);
-        vscode.window.showInformationMessage(`Axiom dataset set to: ${newDataset}`);
-
-        // If there's a trace ID loaded, refresh with the new dataset
-        const currentTraceId = context.globalState.get<string>("axiomTraceId");
-        if (currentTraceId) {
-          await context.globalState.update("logFilePath", `axiom:${currentTraceId}`);
-          logExplorerProvider.refresh();
-        }
-
-        updateStatusBars();
-      }
-    }
-  );
-  
-  // Command to register a custom log parser extension
-  const registerLogParserCommand = vscode.commands.registerCommand(
-    "traceback.registerLogParser",
-    (parser: LogParser) => {
-      if (!parser || typeof parser.canParse !== 'function' || typeof parser.parse !== 'function') {
-        console.error('Invalid log parser provided. Parser must implement LogParser interface.');
-        return false;
-      }
-      
-      try {
-        logParserRegistry.registerParser(parser);
-        console.log('Custom log parser registered successfully');
-        return true;
-      } catch (error) {
-        console.error('Failed to register log parser:', error);
-        return false;
-      }
-    }
-  );
-
   // Register settings command
   const openSettingsCommand = vscode.commands.registerCommand(
     "traceback.openSettings",
@@ -242,6 +133,31 @@ export function activate(context: vscode.ExtensionContext) {
     }
   );
 
+  // Add new command to show span visualizer
+  const showSpanVisualizerCommand = vscode.commands.registerCommand(
+    "traceback.showSpanVisualizer",
+    () => {
+      // Get the current logs from the LogExplorerProvider
+      const logs = logExplorerProvider.getLogs();
+      SpanVisualizerPanel.createOrShow(context, logs);
+    }
+  );
+
+  // Register the span visualizer command
+  context.subscriptions.push(
+    vscode.commands.registerCommand('traceback.openSpanVisualizer', () => {
+      const logs = logExplorerProvider.getLogs();
+      SpanVisualizerPanel.createOrShow(context, logs);
+    })
+  );
+
+  // Register the filter by span command
+  context.subscriptions.push(
+    vscode.commands.registerCommand('traceback.filterBySpan', (spanName: string) => {
+      logExplorerProvider.filterBySpan(spanName);
+    })
+  );
+
   context.subscriptions.push(
     treeView,
     openSettingsCommand,
@@ -252,13 +168,8 @@ export function activate(context: vscode.ExtensionContext) {
     setRepoPathCommand,
     resetLogPathCommand,
     clearExplorersCommand,
-    loadAxiomTraceCommand,
-    setAxiomDatasetCommand,
-    storeAxiomTokenCommand,
-    getAxiomTokenCommand,
-    getAxiomDatasetCommand,
-    registerLogParserCommand,
-    openCallStackLocationCommand
+    openCallStackLocationCommand,
+    showSpanVisualizerCommand
   );
 
   // Initial refresh
