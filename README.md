@@ -4,7 +4,7 @@ A VS Code extension that brings telemetry data (traces, logs, and metrics) into 
 
 ## Demo
 
-![TraceBack demo (v0 4 7)](https://github.com/user-attachments/assets/07701ce5-54a0-42e4-ad6e-a6e77238b6d4)
+![Traceback 0 5 Boomerang demo](https://github.com/user-attachments/assets/6fb626fa-84da-4e62-9963-64f97d9a80bf)
 
 ## Quick Start
 
