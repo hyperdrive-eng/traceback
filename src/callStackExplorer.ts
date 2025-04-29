@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { LogEntry, Span } from './logExplorer';
+import { RustLogEntry } from './logExplorer';
 import { CallerAnalysis } from './claudeService';
 import { ClaudeService } from './claudeService';
 import * as path from 'path';
@@ -141,7 +141,7 @@ export class CallStackExplorerProvider implements vscode.TreeDataProvider<CallSt
     new vscode.EventEmitter<CallStackTreeItem | undefined | null | void>();
   readonly onDidChangeTreeData: vscode.Event<CallStackTreeItem | undefined | null | void> = this._onDidChangeTreeData.event;
 
-  private currentLogEntry: LogEntry | undefined;
+  private currentLogEntry: RustLogEntry | undefined;
   private callerAnalysis: CallerNode[] = [];
   private claudeService: ClaudeService = ClaudeService.getInstance();
   private isAnalyzing: boolean = false;
@@ -152,7 +152,7 @@ export class CallStackExplorerProvider implements vscode.TreeDataProvider<CallSt
   /**
    * Set the spans for the current log entry and refresh the view
    */
-  public setLogEntry(log: LogEntry | undefined, isAnalyzing: boolean = false): void {
+  public setLogEntry(log: RustLogEntry | undefined, isAnalyzing: boolean = false): void {
     this.currentLogEntry = log;
     this.callerAnalysis = [];
     this.isAnalyzing = isAnalyzing;
@@ -414,7 +414,7 @@ export class CallStackExplorerProvider implements vscode.TreeDataProvider<CallSt
   async analyzeCallers(
     currentLogLine: string,
     staticSearchString: string,
-    allLogs: LogEntry[],
+    allLogs: RustLogEntry[],
     potentialCallers: Array<{ filePath: string; lineNumber: number; code: string; functionName: string; functionRange?: vscode.Range }>
   ): Promise<void> {
     try {
@@ -422,11 +422,7 @@ export class CallStackExplorerProvider implements vscode.TreeDataProvider<CallSt
       this._onDidChangeTreeData.fire();
       
       vscode.window.showInformationMessage('Computing call stack analysis...');
-      const allLogLines = allLogs.map(log =>
-        log.message ||
-        log.jsonPayload?.fields?.message ||
-        ''
-      ).filter(msg => msg);
+      const allLogLines = allLogs.map(log => log.message || '').filter(msg => msg);
 
       const analysis = await this.claudeService.analyzeCallers(
         currentLogLine,

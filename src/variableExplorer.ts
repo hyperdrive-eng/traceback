@@ -1,15 +1,12 @@
 import * as vscode from 'vscode';
-import { LogEntry } from './logExplorer';
+import { RustLogEntry } from './logExplorer';
+import { ClaudeService } from './claudeService';
+import { VariableDecorator } from './variableDecorator';
 
 /**
  * Tree view entry representing a variable
  */
 export class VariableItem extends vscode.TreeItem {
-  // Make value accessible for tree data provider
-  public readonly itemValue: any;
-  // Make itemType accessible for tree data provider
-  public readonly itemType: string;
-  // Make buttons accessible - added for VS Code 1.74+
   public buttons?: { 
     iconPath: vscode.ThemeIcon; 
     tooltip: string;
@@ -19,41 +16,37 @@ export class VariableItem extends vscode.TreeItem {
       arguments?: any[];
     };
   }[];
-  
+
   constructor(
     public readonly label: string,
-    value: any,
-    itemType: string = 'variable', 
+    public readonly itemValue: any,
+    public readonly itemType: string = 'variable', 
     collapsibleState: vscode.TreeItemCollapsibleState
   ) {
     super(label, collapsibleState);
-    
-    // Store value and type as public properties
-    this.itemValue = value;
-    this.itemType = itemType;
     
     // Set contextValue for context menu and when clause
     this.contextValue = itemType;
     
     // Format the description based on the value type
-    this.description = this.formatValueForDisplay(value);
+    this.description = this.formatValueForDisplay(itemValue);
     
     // Set an appropriate icon based on the type
-    this.iconPath = this.getIconForType(value);
+    this.iconPath = this.getIconForType(itemValue);
     
     // Add ability to show variable in editor and also allow copy
     if (itemType === 'property' || itemType === 'variable' || itemType === 'arrayItem') {
       this.command = {
         command: 'traceback.showVariableInEditor',
         title: 'Show Variable in Editor',
-        arguments: [label, value],
+        arguments: [label, itemValue],
       };
     } else {
       // Default to copy for non-variable items
       this.command = {
         command: 'traceback.copyVariableValue',
         title: 'Copy Value',
-        arguments: [value],
+        arguments: [itemValue],
       };
     }
     
@@ -70,7 +63,6 @@ export class VariableItem extends vscode.TreeItem {
         {
           iconPath: new vscode.ThemeIcon('eye'),
           tooltip: 'Inspect Value',
-          // Use a separate command for button clicks to handle context
           command: 'traceback.inspectVariableFromContext'
         }
       ];
@@ -137,54 +129,34 @@ export class VariableItem extends vscode.TreeItem {
  * Tree data provider for the variable explorer
  */
 export class VariableExplorerProvider implements vscode.TreeDataProvider<VariableItem> {
-  private _onDidChangeTreeData: vscode.EventEmitter<VariableItem | undefined | null | void> = 
-    new vscode.EventEmitter<VariableItem | undefined | null | void>();
-  
-  readonly onDidChangeTreeData: vscode.Event<VariableItem | undefined | null | void> = 
-    this._onDidChangeTreeData.event;
-  
-  private currentLog: LogEntry | undefined;
-  private variableDecorator: any; // Will be set from extension.ts
+  private _onDidChangeTreeData: vscode.EventEmitter<VariableItem | undefined | null | void> = new vscode.EventEmitter<VariableItem | undefined | null | void>();
+  readonly onDidChangeTreeData: vscode.Event<VariableItem | undefined | null | void> = this._onDidChangeTreeData.event;
+
+  private currentLog: RustLogEntry | undefined;
   private isAnalyzing: boolean = false;
-  
+  private claudeService: ClaudeService = ClaudeService.getInstance();
+  private variableDecorator: VariableDecorator | undefined;
+
   constructor(private context: vscode.ExtensionContext) {}
-  
-  /**
-   * Set the current log and refresh the view
-   */
-  public setLog(log: LogEntry | undefined, isAnalyzing: boolean = false): void {
+
+  public setVariableDecorator(decorator: VariableDecorator): void {
+    this.variableDecorator = decorator;
+  }
+
+  public setLog(log: RustLogEntry | undefined, isAnalyzing: boolean = false): void {
     this.currentLog = log;
     this.isAnalyzing = isAnalyzing;
     this._onDidChangeTreeData.fire();
   }
-  
-  /**
-   * Get the current log
-   */
-  public getLog(): LogEntry | undefined {
+
+  public getLog(): RustLogEntry | undefined {
     return this.currentLog;
   }
-  
-  /**
-   * Set the variable decorator to use
-   */
-  public setVariableDecorator(decorator: any): void {
-    this.variableDecorator = decorator;
-  }
-  
-  /**
-   * Show a variable in the editor
-   */
-  public showVariableInEditor(variableName: string, variableValue: any): void {
-    if (this.variableDecorator && this.currentLog) {
-      this.variableDecorator.decorateVariable(variableName, variableValue, this.currentLog);
-    }
-  }
-  
+
   /**
    * Get the TreeItem for a given element
    */
-  getTreeItem(element: VariableItem): vscode.TreeItem {
+  getTreeItem(element: VariableItem): VariableItem {
     return element;
   }
   
@@ -220,22 +192,18 @@ export class VariableExplorerProvider implements vscode.TreeDataProvider<Variabl
       const items: VariableItem[] = [];
       
       // Add a header showing the log message
-      const headerMessage = this.currentLog.message || 
-                            (this.currentLog.jsonPayload?.fields?.message) || 
-                            'Log Entry';
+      const headerMessage = this.currentLog.message;
       
-      // For the header, we'll use the entire log object as the value for inspection
-      // But keep the description showing the timestamp for display
+      // For the header, we'll use the entire log object for inspection
       const headerItem = new VariableItem(
         headerMessage,
-        this.currentLog, // Use the full log object for inspection
+        this.currentLog,
         'header',
         vscode.TreeItemCollapsibleState.None
       );
       
-      // Override description to show timestamp instead of the full object 
+      // Override description to show timestamp
       headerItem.description = `Log from ${new Date(this.currentLog.timestamp).toLocaleString()}`;
-      
       items.push(headerItem);
       
       // Add Claude's inferred variables if available
@@ -248,76 +216,22 @@ export class VariableExplorerProvider implements vscode.TreeDataProvider<Variabl
         ));
       }
       
-      // Handle log format
-      // Add common sections
-      
-      // Fields section
-      const fields = this.currentLog.jsonPayload?.fields;
-      if (fields && Object.keys(fields).length > 0) {
+      // Add span fields section
+      if (this.currentLog.span_root.fields.length > 0) {
         items.push(new VariableItem(
           'Fields',
-          fields,
-          'Fields', // Use 'Fields' as specific type to filter message in children
-          vscode.TreeItemCollapsibleState.Expanded
-        ));
-      }
-      
-      // Span information
-      if (this.currentLog.jsonPayload?.span) {
-        items.push(new VariableItem(
-          'Span',
-          this.currentLog.jsonPayload.span,
+          this.currentLog.span_root.fields,
           'section',
           vscode.TreeItemCollapsibleState.Expanded
         ));
       }
       
-      // Multiple spans array
-      if (this.currentLog.jsonPayload?.spans && this.currentLog.jsonPayload.spans.length > 0) {
-        items.push(new VariableItem(
-          'Spans',
-          this.currentLog.jsonPayload.spans,
-          'section',
-          vscode.TreeItemCollapsibleState.Collapsed
-        ));
-      }
-      
-      // Labels
-      if (this.currentLog.labels && Object.keys(this.currentLog.labels).length > 0) {
-        items.push(new VariableItem(
-          'Labels',
-          this.currentLog.labels,
-          'section',
-          vscode.TreeItemCollapsibleState.Collapsed
-        ));
-      }
-      
-      // Resource information
-      if (this.currentLog.resource) {
-        items.push(new VariableItem(
-          'Resource',
-          this.currentLog.resource,
-          'section',
-          vscode.TreeItemCollapsibleState.Collapsed
-        ));
-      }
-      
-      // Basic log metadata for all log types
+      // Basic log metadata
       const metadata: Record<string, any> = {
-        severity: this.currentLog.severity,
+        severity: this.currentLog.level,
+        level: this.currentLog.level,
         timestamp: this.currentLog.timestamp
       };
-      
-      // Add additional metadata for traditional logs
-      if (this.currentLog.insertId) {
-        metadata.insertId = this.currentLog.insertId;
-      }
-      if (this.currentLog.receiveTimestamp) {
-        metadata.receiveTimestamp = this.currentLog.receiveTimestamp;
-      }
-      if (this.currentLog.logName) {
-        metadata.logName = this.currentLog.logName;
-      }
       
       items.push(new VariableItem(
         'Metadata',
@@ -424,14 +338,6 @@ export function registerVariableExplorer(context: vscode.ExtensionContext): Vari
     }
   );
   
-  // Register a command to show variable in editor
-  const showVariableCommand = vscode.commands.registerCommand(
-    'traceback.showVariableInEditor',
-    (variableName: string, variableValue: any) => {
-      variableExplorerProvider.showVariableInEditor(variableName, variableValue);
-    }
-  );
-  
   // Register a command to inspect variable value
   const inspectVariableCommand = vscode.commands.registerCommand(
     'traceback.inspectVariableValue',
@@ -448,8 +354,8 @@ export function registerVariableExplorer(context: vscode.ExtensionContext): Vari
           // Get the currently focused item from the tree view
           const selection = treeView.selection;
           if (selection.length > 0) {
-            const selectedItem = selection[0];
-            variableName = selectedItem.label.toString();
+            const selectedItem = selection[0] as VariableItem;
+            variableName = selectedItem.label;
             variableValue = selectedItem.itemValue;
             console.log('Using selected item:', { variableName, variableValue });
           } else {
@@ -573,12 +479,10 @@ export function registerVariableExplorer(context: vscode.ExtensionContext): Vari
   // Register a command to inspect variable from context menu or button click
   const inspectVariableFromContextCommand = vscode.commands.registerCommand(
     'traceback.inspectVariableFromContext',
-    (contextItem?: any) => {
+    (contextItem?: VariableItem) => {
       // Convert the provided context to VariableItem type if possible
-      const item = contextItem as VariableItem;
-      // Get the item from the command context (when invoked from context menu)
-      if (item && item.label && item.itemValue !== undefined) {
-        vscode.commands.executeCommand('traceback.inspectVariableValue', item.label, item.itemValue);
+      if (contextItem && contextItem.label && contextItem.itemValue !== undefined) {
+        vscode.commands.executeCommand('traceback.inspectVariableValue', contextItem.label, contextItem.itemValue);
         return;
       }
       
@@ -586,7 +490,7 @@ export function registerVariableExplorer(context: vscode.ExtensionContext): Vari
       // This handles button clicks where item context isn't passed
       try {
         if (treeView.selection.length > 0) {
-          const selectedItem = treeView.selection[0];
+          const selectedItem = treeView.selection[0] as VariableItem;
           if (selectedItem && selectedItem.label && selectedItem.itemValue !== undefined) {
             vscode.commands.executeCommand('traceback.inspectVariableValue', 
                                           selectedItem.label, 
@@ -607,7 +511,6 @@ export function registerVariableExplorer(context: vscode.ExtensionContext): Vari
   context.subscriptions.push(
     treeView, 
     copyValueCommand, 
-    showVariableCommand, 
     inspectVariableCommand,
     inspectVariableFromContextCommand
   );

@@ -1,40 +1,32 @@
 import * as vscode from 'vscode';
-import { LogEntry, RustSpan, RustSpanField } from './logExplorer';
+import { RustLogEntry, RustSpan, RustSpanField } from './logExplorer';
 import dayjs from 'dayjs';
 
-interface SpanData {
+interface RustSpanVisualizerData {
     id: string;
     name: string;
     startTime: number;
     endTime: number;
     duration: number;
     parentId?: string;
-    serviceName: string;
+    fields: RustSpanField[];
     severity: string;
-    fields?: Record<string, string>;
-    depth?: number;
-}
-
-// Extend LogEntry interface to include Rust spans
-declare module './logExplorer' {
-    interface LogEntry {
-        rustSpans?: RustSpan[];
-    }
+    depth: number;
 }
 
 /**
- * Manages the span visualizer panel that shows concurrent program flow
+ * Manages the span visualizer panel that shows Rust program flow
  */
 export class SpanVisualizerPanel {
     public static currentPanel: SpanVisualizerPanel | undefined;
     private readonly _panel: vscode.WebviewPanel;
     private _disposables: vscode.Disposable[] = [];
-    private _spans: SpanData[] = [];
+    private _spans: RustSpanVisualizerData[] = [];
 
     /**
      * Create or show the span visualizer panel
      */
-    public static createOrShow(context: vscode.ExtensionContext, logs: LogEntry[]) {
+    public static createOrShow(context: vscode.ExtensionContext, logs: RustLogEntry[]) {
         // If we already have a panel, show it
         if (SpanVisualizerPanel.currentPanel) {
             SpanVisualizerPanel.currentPanel.updateSpans(logs);
@@ -45,7 +37,7 @@ export class SpanVisualizerPanel {
         // Otherwise, create a new panel
         const panel = vscode.window.createWebviewPanel(
             'spanVisualizer',
-            'Span Visualizer',
+            'Rust Span Visualizer',
             {
                 viewColumn: vscode.ViewColumn.Two,
                 preserveFocus: true
@@ -59,7 +51,7 @@ export class SpanVisualizerPanel {
         SpanVisualizerPanel.currentPanel = new SpanVisualizerPanel(panel, context, logs);
     }
 
-    private constructor(panel: vscode.WebviewPanel, context: vscode.ExtensionContext, logs: LogEntry[]) {
+    private constructor(panel: vscode.WebviewPanel, context: vscode.ExtensionContext, logs: RustLogEntry[]) {
         this._panel = panel;
 
         // Process initial logs
@@ -99,20 +91,26 @@ export class SpanVisualizerPanel {
     private _handleSpanClick(spanId: string) {
         const span = this._spans.find(s => s.id === spanId);
         if (span) {
-            vscode.window.showInformationMessage(`Span: ${span.name} (${span.duration}ms)`);
+            // Create a formatted message with all fields
+            const fieldsStr = span.fields
+                .map(f => `${f.name}: ${f.value}`)
+                .join('\n');
+            
+            vscode.window.showInformationMessage(
+                `Span: ${span.name}\nDuration: ${span.duration}ms\nFields:\n${fieldsStr}`
+            );
         }
     }
 
-    public updateSpans(logs: LogEntry[]) {
-        // Process logs into span data
+    public updateSpans(logs: RustLogEntry[]) {
         this._spans = this._processLogs(logs);
         if (this._panel) {
             this._update();
         }
     }
 
-    private _processLogs(logs: LogEntry[]): SpanData[] {
-        const spans: SpanData[] = [];
+    private _processLogs(logs: RustLogEntry[]): RustSpanVisualizerData[] {
+        const spans: RustSpanVisualizerData[] = [];
         
         // Sort logs by timestamp
         const sortedLogs = [...logs].sort((a, b) => 
@@ -127,91 +125,41 @@ export class SpanVisualizerPanel {
         const globalStartTime = new Date(sortedLogs[0].timestamp).getTime();
 
         for (const log of sortedLogs) {
-            let spanData: SpanData | undefined;
+            const startTime = new Date(log.timestamp).getTime();
+            
+            const processSpan = (rustSpan: RustSpan, depth: number = 0, parentId?: string): void => {
+                // Calculate an estimated duration based on depth
+                const estimatedDuration = 1000 / (depth + 1); // Shorter duration for deeper spans
 
-            if (log.axiomSpan) {
-                // Handle Axiom span format
-                const startTime = new Date(log.timestamp).getTime();
-                const duration = log.axiomSpan.duration || 0;
-                spanData = {
-                    id: log.axiomSpan.span_id || log.axiomSpan.id || `span_${spans.length}`,
-                    name: log.axiomSpan.name || 'Unknown operation',
+                const spanId = `rust_span_${spans.length}_${depth}`;
+
+                spans.push({
+                    id: spanId,
+                    name: rustSpan.name,
                     startTime: startTime - globalStartTime,
-                    endTime: startTime + duration - globalStartTime,
-                    duration: duration,
-                    parentId: log.axiomSpan.parent_span_id,
-                    serviceName: log.serviceName || log.axiomSpan['service.name'] || 'unknown',
-                    severity: log.severity,
-                    fields: log.axiomSpan
-                };
-            } else if (log.jsonPayload?.span) {
-                // Handle standard span format
-                const startTime = new Date(log.timestamp).getTime();
-                const duration = log.jsonPayload.span.duration || 0;
-                const fields = log.jsonPayload.fields || {};
-                
-                spanData = {
-                    id: log.jsonPayload.span.key_id || fields['span_id'] || `span_${spans.length}`,
-                    name: log.jsonPayload.span.name || 'Unknown operation',
-                    startTime: startTime - globalStartTime,
-                    endTime: startTime + duration - globalStartTime,
-                    duration: duration,
-                    parentId: log.jsonPayload.span.parent_id || fields['parent_span_id'],
-                    serviceName: log.serviceName || log.jsonPayload.target || 'unknown',
-                    severity: log.severity,
-                    fields: fields
-                };
-            } else if (log.jsonPayload?.fields?.span_root) {
-                // Handle Rust spans
-                const startTime = new Date(log.timestamp).getTime();
-                const processSpan = (rustSpan: RustSpan, depth: number = 0): void => {
-                    // Convert RustSpanField array to Record<string, string>
-                    const fields: Record<string, string> = {};
-                    rustSpan.fields.forEach(field => {
-                        fields[field.name] = field.value;
-                    });
+                    endTime: startTime + estimatedDuration - globalStartTime,
+                    duration: estimatedDuration,
+                    parentId: parentId,
+                    fields: rustSpan.fields,
+                    severity: log.level,
+                    depth: depth
+                });
 
-                    // Calculate an estimated duration based on depth
-                    const estimatedDuration = 1000 / (depth + 1); // Shorter duration for deeper spans
+                // Process child span if it exists
+                if (rustSpan.child) {
+                    processSpan(rustSpan.child, depth + 1, spanId);
+                }
+            };
 
-                    const spanId = `rust_span_${spans.length}_${depth}`;
-                    const parentId = depth > 0 ? `rust_span_${spans.length}_${depth - 1}` : undefined;
-
-                    spans.push({
-                        id: spanId,
-                        name: rustSpan.name,
-                        startTime: startTime - globalStartTime,
-                        endTime: startTime + estimatedDuration - globalStartTime,
-                        duration: estimatedDuration,
-                        parentId: parentId,
-                        serviceName: log.serviceName || 'rust-service',
-                        severity: log.severity,
-                        fields: fields,
-                        depth: depth
-                    });
-
-                    // Process child span if it exists
-                    if (rustSpan.child) {
-                        processSpan(rustSpan.child, depth + 1);
-                    }
-                };
-
-                // Start processing from the root span
-                const rootSpan = log.jsonPayload.fields.span_root as RustSpan;
-                processSpan(rootSpan);
-                continue; // Skip the default spanData push since we've already added spans
-            }
-
-            if (spanData) {
-                spans.push(spanData);
-            }
+            // Process from the root span
+            processSpan(log.span_root);
         }
 
         return spans;
     }
 
     private _update() {
-        this._panel.title = 'Span Visualizer';
+        this._panel.title = 'Rust Span Visualizer';
         this._panel.webview.html = this._getHtmlForWebview();
     }
 
@@ -229,26 +177,23 @@ export class SpanVisualizerPanel {
             const width = ((span.endTime - span.startTime) / maxEndTime) * 100;
             
             // Adjust vertical position based on depth for nested spans
-            const verticalOffset = span.depth ? span.depth * 5 : 0;
+            const verticalOffset = span.depth * 5;
             const top = index * 30 + 10 + verticalOffset;
 
             // Determine color based on severity
             const color = this._getSeverityColor(span.severity);
 
             // Create tooltip with span details including fields
-            let tooltip = `${span.name} (${span.duration}ms)\nService: ${span.serviceName}\nSeverity: ${span.severity}`;
-            if (span.fields) {
+            let tooltip = `${span.name} (${span.duration}ms)\nSeverity: ${span.severity}`;
+            if (span.fields.length > 0) {
                 tooltip += '\n\nFields:';
-                for (const [key, value] of Object.entries(span.fields)) {
-                    if (typeof value === 'string' || typeof value === 'number') {
-                        tooltip += `\n${key}: ${value}`;
-                    }
+                for (const field of span.fields) {
+                    tooltip += `\n${field.name}: ${field.value}`;
                 }
             }
 
             // Add visual indication of nesting
-            const indentLevel = span.depth || 0;
-            const indentMargin = indentLevel * 20;
+            const indentMargin = span.depth * 20;
 
             return `
                 <div class="span" 
@@ -265,7 +210,7 @@ export class SpanVisualizerPanel {
         <head>
             <meta charset="UTF-8">
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>Span Visualizer</title>
+            <title>Rust Span Visualizer</title>
             <style>
                 body {
                     font-family: var(--vscode-font-family);
@@ -317,7 +262,7 @@ export class SpanVisualizerPanel {
             </style>
         </head>
         <body>
-            <h2>Concurrent Program Flow</h2>
+            <h2>Rust Program Flow</h2>
             <div class="timeline-header">
                 <span>0ms</span>
                 <span>${maxEndTime}ms</span>
@@ -348,8 +293,10 @@ export class SpanVisualizerPanel {
             case 'ERROR':
                 return 'var(--vscode-errorForeground)';
             case 'WARNING':
+            case 'WARN':
                 return 'var(--vscode-warningForeground)';
             case 'DEBUG':
+            case 'TRACE':
                 return 'var(--vscode-debugIcon-startForeground)';
             default:
                 return 'var(--vscode-textLink-foreground)';

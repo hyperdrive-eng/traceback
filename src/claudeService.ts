@@ -28,7 +28,9 @@ export interface CallerAnalysis {
 export interface RegexPattern {
     pattern: string;
     description: string;
-    extractionMap: Record<string, string>;
+    extractionMap: {
+        [key: string]: string;  // Maps regex capture group names to RustLogEntry fields
+    };
 }
 
 export class ClaudeService {
@@ -59,6 +61,16 @@ export class ClaudeService {
         await vscode.workspace.getConfiguration('traceback').update('claudeApiKey', key, true);
     }
 
+    /**
+     * Analyze a log line to extract structured information
+     * 
+     * @param logLine The log line to analyze
+     * @param language The programming language of the codebase
+     * @returns {Promise<LLMLogAnalysis>} Analysis results including:
+     * 1. A static search string for finding similar logs
+     * 2. Extracted variables and their values
+     * 3. Include an "extractionMap" that maps regex capture group names to RustLogEntry field names
+     */
     public async analyzeLog(logMessage: string, language: string): Promise<LLMLogAnalysis> {
         if (!this.apiKey) {
             throw new Error('Claude API key not set. Please set your API key first.');
