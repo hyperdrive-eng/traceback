@@ -101,7 +101,7 @@ export class SpanVisualizerPanel {
                 this._update();
             }
 
-            // Notify LogExplorerProvider to filter logs by this span
+            // Clicking on span name always filters by span
             vscode.commands.executeCommand('traceback.filterBySpan', span.name);
         }
     }
@@ -112,7 +112,7 @@ export class SpanVisualizerPanel {
             // Find the log entry that corresponds to this span
             const logEntry = this._findLogEntryBySpanId(spanId);
             if (logEntry) {
-                // Use the existing openLog command
+                // Clicking on timeline always opens and analyzes the specific log
                 vscode.commands.executeCommand('traceback.openLog', logEntry);
             }
         }
