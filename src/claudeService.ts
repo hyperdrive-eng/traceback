@@ -155,7 +155,7 @@ export class ClaudeService {
         const request = {
             messages: [{
                 role: 'user',
-                content: `Analyze this log message and extract:
+                content: `Analyze this log message from Rust's tracing library and extract:
 1. Think and infer a possibly longest static substring that can be searched in the code base.
 2. Key-value pairs of any variables or dynamic values in the log
 
@@ -165,17 +165,26 @@ Rules for static search string:
 - Predicted staticSearchString should be exact substring of logMessage. 
 - logMessage.substring(staticSearchString) should be true.
 - No regular expressions allowed.
+- For Rust tracing library logs, focus on the span name and event message.
 
 Rules for variables:
-- Extract all key-value pairs and dynamic values
+- Extract all key-value pairs and dynamic values from tracing fields
 - Preserve variable names as they appear in the log
+- Look for structured fields in the format key="value" or key=value
 
 Examples:
-Input: "[PlaceOrder] user_id=\"3790d414-165b-11f0-8ee4-96dac6adf53a\" user_currency=\"USD\""
-Static: "PlaceOrder"  (Note: brackets and log level removed)
+Input: "[TRACE traceback::span] span_name=\"PlaceOrder\" user_id=\"3790d414-165b-11f0-8ee4-96dac6adf53a\" user_currency=\"USD\""
+Static: "PlaceOrder"  (Note: brackets, log level, and module path removed)
 Variables: {
   "user_id": "3790d414-165b-11f0-8ee4-96dac6adf53a",
   "user_currency": "USD"
+}
+
+Input: "[DEBUG traceback::event] message=\"Processing order\" order_id=123 status=\"pending\""
+Static: "Processing order"
+Variables: {
+  "order_id": 123,
+  "status": "pending"
 }`
             }],
             model: this.model,

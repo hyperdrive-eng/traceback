@@ -95,6 +95,7 @@ export class LogExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
     }>) => void
   } | undefined;
   private claudeService: ClaudeService = ClaudeService.getInstance();
+  private _currentSpanFilter: string | null = null;
 
   constructor(context: vscode.ExtensionContext) {
     this.context = context;
@@ -166,6 +167,9 @@ export class LogExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
       this.callStackExplorerProvider.setLogEntry(undefined);
     }
 
+    // Clear span filter
+    this._currentSpanFilter = null;
+
     this.loadLogs();
     this._onDidChangeTreeData.fire();
 
@@ -179,84 +183,73 @@ export class LogExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
 
   getChildren(element?: vscode.TreeItem): Thenable<vscode.TreeItem[]> {
     if (!element) {
-      if (this.sortByTime) {
-        // Get all logs and sort by timestamp
-        const allLogs = Array.from(this.spanMap.values())
-          .flat()
-          .filter(log => this.selectedLogLevels.has(log.level.toUpperCase()))
-          .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+      // Get all logs and sort by timestamp
+      let allLogs = Array.from(this.spanMap.values())
+        .flat()
+        .filter(log => this.selectedLogLevels.has(log.level.toUpperCase()));
 
-        // Group consecutive logs from the same span hierarchy
-        const result: vscode.TreeItem[] = [];
-        let currentGroup: RustLogEntry[] = [];
-        let currentGroupName: string | null = null;
-
-        allLogs.forEach((log) => {
-          const groupName = this.getGroupName(log);
-
-          if (groupName === currentGroupName) {
-            currentGroup.push(log);
-          } else {
-            if (currentGroup.length > 0) {
-              if (currentGroup.length === 1) {
-                result.push(new LogTreeItem(currentGroup[0]));
-              } else {
-                result.push(new SpanGroupItem(
-                  currentGroupName!,
-                  currentGroup,
-                  vscode.TreeItemCollapsibleState.Expanded
-                ));
-              }
+      // Apply span filter if set
+      if (this._currentSpanFilter) {
+        allLogs = allLogs.filter(log => {
+          let currentSpan = log.span_root;
+          while (currentSpan) {
+            if (currentSpan.name === this._currentSpanFilter) {
+              return true;
             }
-
-            currentGroupName = groupName;
-            currentGroup = [log];
+            if (!currentSpan.child) break;
+            currentSpan = currentSpan.child;
           }
+          return false;
         });
-
-        // Handle the last group
-        if (currentGroup.length > 0) {
-          if (currentGroup.length === 1) {
-            result.push(new LogTreeItem(currentGroup[0]));
-          } else {
-            result.push(new SpanGroupItem(
-              currentGroupName!,
-              currentGroup,
-              vscode.TreeItemCollapsibleState.Expanded
-            ));
-          }
-        }
-
-        return Promise.resolve(result);
-      } else {
-        // For regular grouping by span hierarchy
-        const groupedLogs = new Map<string, RustLogEntry[]>();
-
-        Array.from(this.spanMap.values())
-          .flat()
-          .filter(log => this.selectedLogLevels.has(log.level))
-          .forEach(log => {
-            const groupName = this.getGroupName(log);
-            if (!groupedLogs.has(groupName)) {
-              groupedLogs.set(groupName, []);
-            }
-            groupedLogs.get(groupName)!.push(log);
-          });
-
-        const result: vscode.TreeItem[] = [];
-
-        // Add grouped logs
-        result.push(...Array.from(groupedLogs.entries())
-          .map(([groupName, logs]) => new SpanGroupItem(
-            groupName,
-            logs,
-            vscode.TreeItemCollapsibleState.Expanded
-          ))
-          .sort((a, b) => a.spanName.localeCompare(b.spanName))
-        );
-
-        return Promise.resolve(result);
       }
+
+      // Sort by timestamp (most recent first)
+      allLogs.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+
+      // Group only consecutive logs from the same span
+      const result: vscode.TreeItem[] = [];
+      let currentGroup: RustLogEntry[] = [];
+      let currentSpanName: string | null = null;
+
+      allLogs.forEach((log) => {
+        const spanName = this.getSpanHierarchyName(log);
+
+        if (spanName === currentSpanName) {
+          currentGroup.push(log);
+        } else {
+          // Add the previous group if it exists
+          if (currentGroup.length > 0) {
+            if (currentGroup.length === 1) {
+              result.push(new LogTreeItem(currentGroup[0]));
+            } else {
+              result.push(new SpanGroupItem(
+                currentSpanName!,
+                currentGroup,
+                vscode.TreeItemCollapsibleState.Expanded
+              ));
+            }
+          }
+
+          // Start a new group
+          currentSpanName = spanName;
+          currentGroup = [log];
+        }
+      });
+
+      // Handle the last group
+      if (currentGroup.length > 0) {
+        if (currentGroup.length === 1) {
+          result.push(new LogTreeItem(currentGroup[0]));
+        } else {
+          result.push(new SpanGroupItem(
+            currentSpanName!,
+            currentGroup,
+            vscode.TreeItemCollapsibleState.Expanded
+          ));
+        }
+      }
+
+      return Promise.resolve(result);
     } else if (element instanceof SpanGroupItem) {
       return Promise.resolve(
         element.logs
@@ -267,9 +260,15 @@ export class LogExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
     return Promise.resolve([]);
   }
 
-  private getGroupName(log: RustLogEntry): string {
-    // For Rust logs, just use the root span name for grouping
-    return log.span_root.name;
+  private getSpanHierarchyName(log: RustLogEntry): string {
+    // Build the full span hierarchy name
+    let spanHierarchy = '';
+    let currentSpan: RustSpan | undefined = log.span_root;
+    while (currentSpan) {
+      spanHierarchy += (spanHierarchy ? ' → ' : '') + currentSpan.name;
+      currentSpan = currentSpan.child;
+    }
+    return spanHierarchy;
   }
 
   private async loadLogs(): Promise<void> {
@@ -300,7 +299,7 @@ export class LogExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
       this.spanMap.clear();
 
       this.logs.forEach(log => {
-        const spanName = this.getGroupName(log);
+        const spanName = this.getSpanHierarchyName(log);
         if (!this.spanMap.has(spanName)) {
           this.spanMap.set(spanName, []);
         }
@@ -793,6 +792,11 @@ export class LogExplorerProvider implements vscode.TreeDataProvider<vscode.TreeI
    */
   public getLogs(): RustLogEntry[] {
     return Array.from(this.spanMap.values()).flat();
+  }
+
+  public filterBySpan(spanName: string | null) {
+    this._currentSpanFilter = spanName;
+    this._onDidChangeTreeData.fire();
   }
 }
 

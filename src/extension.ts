@@ -143,6 +143,21 @@ export function activate(context: vscode.ExtensionContext) {
     }
   );
 
+  // Register the span visualizer command
+  context.subscriptions.push(
+    vscode.commands.registerCommand('traceback.openSpanVisualizer', () => {
+      const logs = logExplorerProvider.getLogs();
+      SpanVisualizerPanel.createOrShow(context, logs);
+    })
+  );
+
+  // Register the filter by span command
+  context.subscriptions.push(
+    vscode.commands.registerCommand('traceback.filterBySpan', (spanName: string) => {
+      logExplorerProvider.filterBySpan(spanName);
+    })
+  );
+
   context.subscriptions.push(
     treeView,
     openSettingsCommand,

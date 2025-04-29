@@ -3,7 +3,7 @@ import { RustLogEntry, RustSpan, RustSpanField } from './logExplorer';
 export class RustLogParser {
     // Regex for matching Rust tracing format with support for span fields
     private static readonly SPAN_LOG_REGEX = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{1,9}Z)\s+(TRACE|DEBUG|INFO|WARN|ERROR)\s+(?:\[([^\]]+)\])?\s*([^:]+(?:\{[^}]+\})?(?::[^:]+(?:\{[^}]+\})?)*): (.+)$/;
-    
+
     // Regex for simpler log format (updated to handle module paths)
     private static readonly SIMPLE_LOG_REGEX = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{1,9}Z)\s+(TRACE|DEBUG|INFO|WARN|ERROR)\s+([^:\s]+(?:::[^:\s]+)*)\s*:\s*(.+)$/;
 
@@ -20,7 +20,7 @@ export class RustLogParser {
         for (const line of lines) {
             // Strip ANSI escape codes before parsing
             const cleanLine = line.replace(RustLogParser.ANSI_REGEX, '');
-            
+
             // First try parsing as JSON
             const jsonLog = this.parseJsonLogLine(cleanLine);
             if (jsonLog) {
@@ -46,7 +46,7 @@ export class RustLogParser {
     private parseJsonLogLine(line: string): RustLogEntry | null {
         try {
             const json = JSON.parse(line);
-            
+
             // Validate required fields
             if (!json.timestamp || !json.level || !json.target || !json.fields?.message) {
                 return null;
@@ -148,7 +148,7 @@ export class RustLogParser {
 
         // Split the span chain into individual spans
         const spans = spanChain.split(':').map(span => span.trim());
-        
+
         // Parse each span into a name and fields
         const parsedSpans = spans.map(span => {
             const nameMatch = span.match(/^([^{]+)(?:\{([^}]+)\})?$/);
@@ -156,11 +156,11 @@ export class RustLogParser {
                 // Handle spans without fields
                 return { name: span, fields: [] };
             }
-            
+
             const [_, name, fieldsStr] = nameMatch;
             // Use the dedicated parseFields method
-            const fields = this.parseFields(fieldsStr || ''); 
-            
+            const fields = this.parseFields(fieldsStr || '');
+
             return { name: name.trim(), fields };
         });
 
@@ -189,7 +189,7 @@ export class RustLogParser {
 
         // Split on spaces that are followed by a word and equals sign, but not inside square brackets
         const fields = fieldsString.split(/\s+(?=[^[\]]*(?:\[|$))(?=\w+=)/);
-        
+
         return fields.map(field => {
             const [key, ...valueParts] = field.split('=');
             if (!key || valueParts.length === 0) {
@@ -197,14 +197,14 @@ export class RustLogParser {
             }
 
             let value = valueParts.join('='); // Rejoin in case value contained =
-            
+
             // Remove surrounding quotes if present
             value = value.replace(/^["'](.*)["']$/, '$1');
-            
+
             return {
                 name: key,
                 value: value
             };
         }).filter((field): field is RustSpanField => field !== null);
     }
-} 
+}
