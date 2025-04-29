@@ -1,6 +1,6 @@
 # TraceBack
 
-A VS Code extension that brings telemetry data (traces, logs, and metrics) into your code.
+A VS Code extension to debug using [`tracing`](https://docs.rs/tracing/latest/tracing/) logs (🦀+🐞)
 
 ## Demo
 
