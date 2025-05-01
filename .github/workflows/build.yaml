@@ -17,6 +17,9 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./vscode-extension
     steps:
       # Documentation: https://github.com/actions/checkout
       - name: Checkout repository
@@ -38,7 +41,7 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: "*.vsix"
+          files: "vscode-extension/*.vsix"
           tag_name: ${{ github.event.inputs.version }}
           
       # Publish to VS Code Marketplace
