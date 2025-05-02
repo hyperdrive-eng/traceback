@@ -115,10 +115,17 @@ class TracebackApp(App):
         self.current_logs = None  # Store the current log content
         self.current_log_path = None  # Store the current log file path
         self.llm_model = "claude-3-7-sonnet-20240229"  # LLM model to use
+        self.api_key_file = os.path.expanduser("~/.traceback/api_key")
         
-        # Initialize Claude client - will use ANTHROPIC_API_KEY env var
+        # Try to load API key from file
+        self.api_key = self._load_api_key()
+        
+        # Initialize Claude client - will use ANTHROPIC_API_KEY env var or stored key
         try:
-            self.claude = ClaudeClient(model=self.llm_model)
+            if self.api_key:
+                self.claude = ClaudeClient(api_key=self.api_key, model=self.llm_model)
+            else:
+                self.claude = ClaudeClient(model=self.llm_model)  # Try env var
             self.claude_available = True
         except ValueError:
             self.claude_available = False
@@ -149,7 +156,14 @@ class TracebackApp(App):
         
         # Check if we're waiting for specific input
         if self.waiting_for:
-            if self.waiting_for == "analyze_file_path":
+            if self.waiting_for == "api_key":
+                # Handle API key input
+                self._handle_api_key_input(user_input)
+                input_widget.value = ""
+                input_widget.placeholder = "Type your message here (Ctrl+I to interrupt)"
+                self.waiting_for = None
+                return
+            elif self.waiting_for == "analyze_file_path":
                 self._process_log_file(user_input)
                 input_widget.value = ""
                 input_widget.placeholder = "Type your message here (Ctrl+I to interrupt)"
@@ -208,6 +222,8 @@ class TracebackApp(App):
 - [bold]/stack [file:line][/] - Get stack trace for location
 - [bold]/callers [file:line][/] - Find callers of a function
 - [bold]/select [option_id][/] - Select an option
+- [bold]/apikey [key][/] - Set API key for Claude
+- [bold]/apikey-status[/] - Check API key status
 
 [bold]Keyboard Shortcuts:[/]
 - [bold]Ctrl+C[/] - Quit the application
@@ -217,6 +233,28 @@ class TracebackApp(App):
         elif command == "/clear":
             chat_log.clear()
             chat_log.write("[bold orange]System:[/] Chat history cleared.")
+        elif command == "/apikey":
+            # Handle API key command
+            if not args_text:
+                # Prompt for API key
+                self._prompt_for_api_key()
+            else:
+                # Set API key directly
+                self._handle_api_key_input(args_text)
+        elif command == "/apikey-status":
+            # Check API key status
+            if self.claude_available:
+                chat_log.write("[bold green]API Key Status:[/] Claude API is configured and available.")
+                
+                # Show a masked version of the key
+                if self.api_key:
+                    masked_key = self.api_key[:7] + "..." + self.api_key[-4:] if len(self.api_key) > 11 else "***"
+                    chat_log.write(f"[bold green]API Key:[/] {masked_key}")
+                else:
+                    chat_log.write("[bold green]API Key:[/] Using environment variable ANTHROPIC_API_KEY")
+            else:
+                chat_log.write("[bold yellow]API Key Status:[/] Claude API is not available.")
+                chat_log.write("[bold yellow]Note:[/] Use /apikey to set your API key.")
         elif command == "/analyze":
             # Handle analyze workflow with file path input
             if not args_text:
@@ -459,7 +497,13 @@ class TracebackApp(App):
         chat_log.write("[bold orange]System:[/] Analyzing logs with AI...")
         
         if not self.claude_available:
-            # Fallback to simulated response if Claude API is not available
+            # Store the operation for later resumption
+            self.pending_operation = ("analyze_logs", log_content)
+            
+            # Prompt user for API key
+            self._prompt_for_api_key()
+            
+            # Fallback to simulated response in the meantime
             import time
             time.sleep(2)
             
@@ -483,7 +527,7 @@ Would you like me to focus on:
 - The database connection issues
 - The memory usage patterns
 """
-            chat_log.write("[bold yellow]Note:[/] Using simulated response (ANTHROPIC_API_KEY not set)")
+            chat_log.write("[bold yellow]Note:[/] Using simulated response (API key not set). Enter your API key to use Claude.")
         else:
             # Use the real Claude API
             try:
@@ -547,7 +591,13 @@ Would you like me to focus on:
         chat_log.write("[bold orange]System:[/] Analyzing code with AI...")
         
         if not self.claude_available:
-            # Fallback to simulated response if Claude API is not available
+            # Store the operation for later resumption
+            self.pending_operation = ("analyze_code", (file_path, line_number, code_context))
+            
+            # Prompt user for API key
+            self._prompt_for_api_key()
+            
+            # Fallback to simulated response in the meantime
             import time
             time.sleep(2)
             
@@ -568,7 +618,7 @@ Suggested fixes:
 
 This code is directly related to the "Connection timeout" errors in the logs. The timeout exception is being caught but not properly handled, leading to cascading failures.
 """
-            chat_log.write("[bold yellow]Note:[/] Using simulated response (ANTHROPIC_API_KEY not set)")
+            chat_log.write("[bold yellow]Note:[/] Using simulated response (API key not set). Enter your API key to use Claude.")
         else:
             # Use the real Claude API
             try:
@@ -623,7 +673,13 @@ This code is directly related to the "Connection timeout" errors in the logs. Th
         chat_log.write("[bold orange]System:[/] Analyzing entry point with AI...")
         
         if not self.claude_available:
-            # Fallback to simulated response if Claude API is not available
+            # Store the operation for later resumption
+            self.pending_operation = ("analyze_entry_point", (log_context, entry_point))
+            
+            # Prompt user for API key
+            self._prompt_for_api_key()
+            
+            # Fallback to simulated response in the meantime
             import time
             time.sleep(2)
             
@@ -646,7 +702,7 @@ I recommend examining:
 - Resource cleanup in the request handling pipeline
 - Any recent changes to the network timeout configuration
 """
-            chat_log.write("[bold yellow]Note:[/] Using simulated response (ANTHROPIC_API_KEY not set)")
+            chat_log.write("[bold yellow]Note:[/] Using simulated response (API key not set). Enter your API key to use Claude.")
         else:
             # Use the real Claude API
             try:
@@ -669,7 +725,13 @@ I recommend examining:
         chat_log.write("[bold orange]System:[/] Processing your question...")
         
         if not self.claude_available:
-            # Fallback to simulated response if Claude API is not available
+            # Store the operation for later resumption
+            self.pending_operation = ("log_followup", question)
+            
+            # Prompt user for API key
+            self._prompt_for_api_key()
+            
+            # Fallback to simulated response in the meantime
             import time
             time.sleep(2)
             
@@ -702,7 +764,7 @@ This is likely caused by:
 
 The fix would involve reviewing connection management code, particularly ensuring connections are returned to the pool or closed in all code paths, including error handlers.
 """
-            chat_log.write("[bold yellow]Note:[/] Using simulated response (ANTHROPIC_API_KEY not set)")
+            chat_log.write("[bold yellow]Note:[/] Using simulated response (API key not set). Enter your API key to use Claude.")
         else:
             # Use the real Claude API
             try:
@@ -713,6 +775,89 @@ The fix would involve reviewing connection management code, particularly ensurin
         # Display the LLM response
         chat_log.write(f"[bold green]AI:[/] {answer}")
 
+    def _load_api_key(self) -> Optional[str]:
+        """Load API key from file."""
+        try:
+            if os.path.exists(self.api_key_file):
+                with open(self.api_key_file, 'r') as f:
+                    return f.read().strip()
+        except Exception:
+            # If we can't read the file, just return None
+            pass
+        return None
+    
+    def _save_api_key(self, api_key: str) -> bool:
+        """Save API key to file."""
+        try:
+            # Make directory if it doesn't exist
+            os.makedirs(os.path.dirname(self.api_key_file), exist_ok=True)
+            
+            # Save API key to file
+            with open(self.api_key_file, 'w') as f:
+                f.write(api_key)
+            
+            # Set file permissions to be readable only by the user
+            os.chmod(self.api_key_file, 0o600)
+            
+            return True
+        except Exception as e:
+            print(f"Error saving API key: {str(e)}")
+            return False
+    
+    def _prompt_for_api_key(self) -> None:
+        """Prompt user for API key."""
+        chat_log = self.query_one("#chat-log", RichLog)
+        input_widget = self.query_one("#user-input", Input)
+        
+        chat_log.write("[bold orange]System:[/] Claude API key not found. Please enter your Anthropic API key.")
+        chat_log.write("[bold orange]System:[/] Your key will be stored in ~/.traceback/api_key")
+        
+        # Set the input widget to a special mode to capture the API key
+        self.waiting_for = "api_key"
+        input_widget.placeholder = "Enter your Anthropic API key (starts with 'sk-')"
+    
+    def _handle_api_key_input(self, api_key: str) -> None:
+        """Handle API key input from user."""
+        chat_log = self.query_one("#chat-log", RichLog)
+        
+        # Validate the API key format
+        if not api_key.startswith("sk-"):
+            chat_log.write("[bold red]Error:[/] Invalid API key format. API keys start with 'sk-'.")
+            chat_log.write("[bold orange]System:[/] Please enter a valid Anthropic API key.")
+            return
+        
+        # Save the API key
+        if self._save_api_key(api_key):
+            self.api_key = api_key
+            
+            # Initialize Claude with the new key
+            try:
+                self.claude = ClaudeClient(api_key=self.api_key, model=self.llm_model)
+                self.claude_available = True
+                chat_log.write("[bold green]Success:[/] API key saved and Claude initialized.")
+                
+                # If we were in the middle of an operation, continue
+                if hasattr(self, 'pending_operation') and self.pending_operation:
+                    operation, args = self.pending_operation
+                    chat_log.write("[bold orange]System:[/] Resuming previous operation...")
+                    
+                    if operation == "analyze_logs":
+                        self._analyze_logs_with_llm(args)
+                    elif operation == "analyze_code":
+                        file_path, line_number, code_context = args
+                        self._analyze_code_with_llm(code_context, file_path, line_number)
+                    elif operation == "analyze_entry_point":
+                        log_context, entry_point = args
+                        self._analyze_entry_point_with_llm(log_context, entry_point)
+                    elif operation == "log_followup":
+                        self._process_log_followup(args)
+                    
+                    self.pending_operation = None
+            except ValueError as e:
+                chat_log.write(f"[bold red]Error:[/] Failed to initialize Claude with the provided key: {str(e)}")
+        else:
+            chat_log.write("[bold red]Error:[/] Failed to save API key.")
+    
     def action_interrupt(self) -> None:
         """Interrupt the current AI response."""
         chat_log = self.query_one("#chat-log", RichLog)
