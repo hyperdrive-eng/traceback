@@ -8,6 +8,7 @@ import re
 from typing import Dict, Any, List, Optional
 
 from tracebackapp.tools.commands import RootCauseCommands
+from tracebackapp.tools.claude_client import ClaudeClient
 
 class CommandBar(Static):
     """A bar displaying available commands."""
@@ -114,6 +115,13 @@ class TracebackApp(App):
         self.current_logs = None  # Store the current log content
         self.current_log_path = None  # Store the current log file path
         self.llm_model = "claude-3-7-sonnet-20240229"  # LLM model to use
+        
+        # Initialize Claude client - will use ANTHROPIC_API_KEY env var
+        try:
+            self.claude = ClaudeClient(model=self.llm_model)
+            self.claude_available = True
+        except ValueError:
+            self.claude_available = False
 
     def compose(self) -> ComposeResult:
         """Compose the application layout."""
@@ -450,36 +458,13 @@ class TracebackApp(App):
         # Display loading indicator
         chat_log.write("[bold orange]System:[/] Analyzing logs with AI...")
         
-        # Define the prompt for log analysis
-        prompt = f"""
-You are an expert system debugging assistant. Analyze the following logs to identify potential issues or errors.
-Focus on:
-1. Error messages and stack traces
-2. Unusual patterns or unexpected behaviors
-3. Potential root causes of issues
-
-After your analysis, suggest one of the following next steps:
-- Examine specific code location (provide file path and line number if possible)
-- Focus on a specific log entry point
-- Provide more context or additional logs
-
-LOGS:
-```
-{log_content[:5000]}  # Limiting to first 5000 chars for demo
-```
-
-Provide your analysis in a clear, structured format with bullet points for key findings.
-"""
-        
-        # In a real implementation, we would call the LLM API here
-        # For demo purposes, we'll simulate an LLM response
-        
-        # Simulate LLM thinking time
-        import time
-        time.sleep(2)
-        
-        # Sample LLM response
-        analysis = """
+        if not self.claude_available:
+            # Fallback to simulated response if Claude API is not available
+            import time
+            time.sleep(2)
+            
+            # Sample LLM response
+            analysis = """
 I've analyzed the logs and identified several potential issues:
 
 • Error pattern detected: Several "Connection timeout" errors appearing at 2023-04-12 15:23:45
@@ -498,7 +483,14 @@ Would you like me to focus on:
 - The database connection issues
 - The memory usage patterns
 """
-        
+            chat_log.write("[bold yellow]Note:[/] Using simulated response (ANTHROPIC_API_KEY not set)")
+        else:
+            # Use the real Claude API
+            try:
+                analysis = self.claude.analyze_logs(log_content)
+            except Exception as e:
+                analysis = f"Error analyzing logs: {str(e)}"
+                
         # Display the LLM analysis
         chat_log.write(f"[bold green]AI Analysis:[/] {analysis}")
         
@@ -554,33 +546,13 @@ Would you like me to focus on:
         # Display loading indicator
         chat_log.write("[bold orange]System:[/] Analyzing code with AI...")
         
-        # Define the prompt for code analysis
-        prompt = f"""
-You are an expert programming debugging assistant. Analyze the following code to identify potential issues or bugs.
-Focus on line {line_number} and its surrounding context.
-
-FILE: {file_path}
-```
-{code_context}
-```
-
-Based on the logs that led us here and this code:
-1. Identify any potential bugs, edge cases, or issues in this code
-2. Explain how this code might relate to the log errors we observed
-3. Suggest specific fixes or improvements
-
-Provide your analysis in a clear, structured format with bullet points for key findings.
-"""
-        
-        # In a real implementation, we would call the LLM API here
-        # For demo purposes, we'll simulate an LLM response
-        
-        # Simulate LLM thinking time
-        import time
-        time.sleep(2)
-        
-        # Sample LLM response
-        analysis = f"""
+        if not self.claude_available:
+            # Fallback to simulated response if Claude API is not available
+            import time
+            time.sleep(2)
+            
+            # Sample LLM response
+            analysis = f"""
 I've analyzed the code at {file_path}:{line_number} and here are my findings:
 
 • The issue appears to be in the error handling logic around line {line_number}
@@ -596,6 +568,13 @@ Suggested fixes:
 
 This code is directly related to the "Connection timeout" errors in the logs. The timeout exception is being caught but not properly handled, leading to cascading failures.
 """
+            chat_log.write("[bold yellow]Note:[/] Using simulated response (ANTHROPIC_API_KEY not set)")
+        else:
+            # Use the real Claude API
+            try:
+                analysis = self.claude.analyze_code(code_context, file_path, line_number)
+            except Exception as e:
+                analysis = f"Error analyzing code: {str(e)}"
         
         # Display the LLM analysis
         chat_log.write(f"[bold green]AI Code Analysis:[/] {analysis}")
@@ -643,33 +622,13 @@ This code is directly related to the "Connection timeout" errors in the logs. Th
         # Display loading indicator
         chat_log.write("[bold orange]System:[/] Analyzing entry point with AI...")
         
-        # Define the prompt for entry point analysis
-        prompt = f"""
-You are an expert system debugging assistant. Analyze the following log section focused on the entry point: "{entry_point}".
-
-LOG CONTEXT:
-```
-{log_context}
-```
-
-Based on this log section:
-1. Identify what happened at this entry point
-2. Explain how this relates to the overall issue we're investigating
-3. Suggest what code or component we should examine next
-4. Identify any patterns or anomalies around this entry point
-
-Provide your analysis in a clear, structured format with bullet points for key findings.
-"""
-        
-        # In a real implementation, we would call the LLM API here
-        # For demo purposes, we'll simulate an LLM response
-        
-        # Simulate LLM thinking time
-        import time
-        time.sleep(2)
-        
-        # Sample LLM response
-        analysis = f"""
+        if not self.claude_available:
+            # Fallback to simulated response if Claude API is not available
+            import time
+            time.sleep(2)
+            
+            # Sample LLM response
+            analysis = f"""
 I've analyzed the logs around the entry point "{entry_point}" and here are my findings:
 
 • This entry point marks where the system started experiencing connection issues
@@ -687,6 +646,13 @@ I recommend examining:
 - Resource cleanup in the request handling pipeline
 - Any recent changes to the network timeout configuration
 """
+            chat_log.write("[bold yellow]Note:[/] Using simulated response (ANTHROPIC_API_KEY not set)")
+        else:
+            # Use the real Claude API
+            try:
+                analysis = self.claude.analyze_entry_point(log_context, entry_point)
+            except Exception as e:
+                analysis = f"Error analyzing entry point: {str(e)}"
         
         # Display the LLM analysis
         chat_log.write(f"[bold green]AI Entry Point Analysis:[/] {analysis}")
@@ -702,31 +668,14 @@ I recommend examining:
         # Display loading indicator
         chat_log.write("[bold orange]System:[/] Processing your question...")
         
-        # Define the prompt for follow-up question
-        prompt = f"""
-You are an expert system debugging assistant. Answer the following question about the logs:
-
-QUESTION: {question}
-
-LOGS:
-```
-{self.current_logs[:5000]}  # Limiting to first 5000 chars for demo
-```
-
-Provide a clear, concise answer based on the log content. If you need more information or context, 
-specify what additional details would be helpful.
-"""
-        
-        # In a real implementation, we would call the LLM API here
-        # For demo purposes, we'll simulate an LLM response
-        
-        # Simulate LLM thinking time
-        import time
-        time.sleep(2)
-        
-        # Sample LLM response based on the question
-        if "error" in question.lower():
-            answer = """
+        if not self.claude_available:
+            # Fallback to simulated response if Claude API is not available
+            import time
+            time.sleep(2)
+            
+            # Sample LLM response based on the question
+            if "error" in question.lower():
+                answer = """
 The main errors in the logs are:
 
 1. Connection timeouts occurring at regular intervals
@@ -736,14 +685,14 @@ The main errors in the logs are:
 
 The most critical appears to be the connection pool exhaustion, which is causing cascading failures in other components.
 """
-        elif "time" in question.lower() or "when" in question.lower():
-            answer = """
+            elif "time" in question.lower() or "when" in question.lower():
+                answer = """
 The issues began at 2023-04-12 15:23:45 UTC, with the first connection timeout.
 The system completely degraded by 15:27:30, about 4 minutes later.
 The pattern shows a gradual increase in error frequency, suggesting a resource leak or cascading failure.
 """
-        else:
-            answer = """
+            else:
+                answer = """
 Based on the logs, the root cause appears to be connection pool exhaustion. The system is not properly closing database connections, which eventually leads to the "too many connections" errors.
 
 This is likely caused by:
@@ -753,6 +702,13 @@ This is likely caused by:
 
 The fix would involve reviewing connection management code, particularly ensuring connections are returned to the pool or closed in all code paths, including error handlers.
 """
+            chat_log.write("[bold yellow]Note:[/] Using simulated response (ANTHROPIC_API_KEY not set)")
+        else:
+            # Use the real Claude API
+            try:
+                answer = self.claude.ask_logs_question(self.current_logs, question)
+            except Exception as e:
+                answer = f"Error processing question: {str(e)}"
         
         # Display the LLM response
         chat_log.write(f"[bold green]AI:[/] {answer}")
