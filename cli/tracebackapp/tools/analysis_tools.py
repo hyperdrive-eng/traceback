@@ -24,8 +24,8 @@ if not logger.handlers:
     file_handler = logging.FileHandler(log_file_path)
     file_handler.setLevel(logging.DEBUG)
     
-    # Create formatter
-    formatter = logging.Formatter('%(asctime)s [%(levelname)s] %(name)s: %(message)s')
+    # Create formatter - simplified format focusing on key info
+    formatter = logging.Formatter('%(asctime)s [%(levelname)s] %(message)s')
     file_handler.setFormatter(formatter)
     
     # Add handler to logger
@@ -295,7 +295,7 @@ Return ONLY the suggested search pattern, nothing else.
                 
         return find_similar_lines
         
-    def get_stack_trace(self, code_location: CodeLocation, max_depth: int = 10) -> List[StackTraceEntry]:
+    def get_stack_trace(self, code_location: CodeLocation, max_depth: int = 50) -> List[StackTraceEntry]:
         """
         Get potential call stack for a code location.
         
@@ -473,6 +473,13 @@ class AnalysisContext:
 class Analyzer:
     """Analyzer for debugging issues using Claude."""
     
+    def _format_findings_summary(self, findings: List[Dict[str, Any]]) -> str:
+        """Format a summary of findings for logging."""
+        if not findings:
+            return "No findings yet"
+        latest = findings[-1]
+        return f"Type: {latest.get('type', 'unknown')}, Context: {latest.get('context', 'none')}"
+        
     def _get_rvm_info(self) -> Optional[str]:
         """Get current RVM gemset path using rvm command."""
         try:
@@ -527,62 +534,58 @@ class Analyzer:
     def analyze(self, initial_input: str, display_callback: Optional[Callable[[str], None]] = None, context: Optional[AnalysisContext] = None) -> None:
         """
         Start analysis with initial input.
-        
-        Args:
-            initial_input: Initial input to analyze
-            display_callback: Optional callback for displaying messages
-            context: Optional existing context to continue analysis with
         """
-        logger.debug("Starting analysis with initial input")
+        logger.info("=== Starting new analysis iteration ===")
         self.display_callback = display_callback
         
         # Use existing context or create new one
         if context is None:
+            logger.info("Creating new analysis context")
             context = AnalysisContext(
                 initial_input=initial_input,
                 current_findings=[]
             )
         
         # Check for too many iterations
-        if len(context.current_findings) > 10:
-            logger.warning("Too many analysis iterations, stopping")
+        if len(context.current_findings) > 50:
+            logger.warning("Analysis stopped: Too many iterations (>10)")
             if self.display_callback:
                 self.display_callback("Analysis stopped: Too many iterations without finding root cause")
             return context
-            
+        
         # Check if we're repeating the same analysis
         if context.current_findings:
             last_finding = context.current_findings[-1]
             # Check if this exact finding exists earlier in the chain
             if any(f == last_finding for f in context.current_findings[:-1]):
-                logger.warning("Detected repeated analysis, stopping")
+                logger.warning("Analysis stopped: Detected repeated analysis")
                 if self.display_callback:
                     self.display_callback("Analysis stopped: Detected repeated analysis")
                 return context
         
         # Get next tool choice from Claude with workspace context
-        logger.debug("Getting tool choice from Claude")
-        logger.info(f"Current findings being passed to Claude: {context.current_findings}")
+        logger.info(f"Calling LLM with findings so far: {self._format_findings_summary(context.current_findings)}")
         result = self.claude.analyze_error(initial_input, context.current_findings)
-        logger.debug(f"Received tool choice result: {result}")
-
+        
         # Extract tool choice
         tool_name = result.get("tool")
         params = result.get("params", {})
         analysis = result.get("analysis", "")
         
-        logger.info(f"Selected tool: {tool_name} with params: {params}")
+        logger.info(f"LLM suggested tool: {tool_name}")
+        if params:
+            logger.info(f"Tool parameters: {json.dumps(params, indent=2)}")
 
         # Display analysis if callback is provided
         if self.display_callback and analysis:
             self.display_callback(analysis)
-            logger.debug(f"Displayed analysis: {analysis}")
 
         # Handle tool choice
         if tool_name == "show_root_cause":
             # Terminal action - show the root cause
             root_cause = params.get("root_cause", "No root cause analysis provided")
-            logger.info(f"Showing root cause: {root_cause}")
+            logger.info("Analysis complete: Root cause found")
+            logger.info(f"Root cause: {root_cause}")
             if self.display_callback:
                 self.display_callback("Root Cause Analysis:\n" + root_cause)
             return context
@@ -591,44 +594,50 @@ class Analyzer:
             # Execute the chosen info-gathering tool
             info_type = params.get("type")
             info_context = params.get("context", "")
-            logger.info(f"Executing info gathering tool: {info_type} with context: {info_context}")
+            logger.info(f"Executing local tool: {info_type}")
             
             # Check if we've already executed this exact tool with these params
             current_tool = {"type": info_type, "context": info_context}
             if any(f.get("tool_executed") == current_tool for f in context.current_findings):
-                logger.warning(f"Already executed tool {info_type} with context {info_context}, stopping")
+                logger.warning(f"Tool execution skipped: Already ran {info_type} with same context")
                 if self.display_callback:
                     self.display_callback("Analysis stopped: Repeated tool execution detected")
                 return context
             
             if info_type == "fetch_files":
+                logger.info("Starting file fetch operation")
                 self._fetch_files(context, info_context)
                 # Record what tool was executed
                 context.current_findings[-1]["tool_executed"] = current_tool
+                logger.info("File fetch complete, continuing analysis")
                 return self.analyze(initial_input, display_callback, context)
             elif info_type == "fetch_logs":
+                logger.info("Starting log fetch operation")
                 self._fetch_logs(context, info_context)
                 context.current_findings[-1]["tool_executed"] = current_tool
+                logger.info("Log fetch complete, continuing analysis")
                 return self.analyze(initial_input, display_callback, context)
             elif info_type == "fetch_code":
+                logger.info("Starting code fetch operation")
                 self._fetch_code(context, info_context)
                 context.current_findings[-1]["tool_executed"] = current_tool
+                logger.info("Code fetch complete, continuing analysis")
                 return self.analyze(initial_input, display_callback, context)
             else:
-                logger.warning(f"Unknown info type: {info_type}")
+                logger.warning(f"Unknown info type requested: {info_type}")
                 if self.display_callback:
                     self.display_callback(f"Unknown info type: {info_type}")
         else:
-            logger.warning(f"Unknown tool: {tool_name}")
+            logger.warning(f"Unknown tool requested: {tool_name}")
             if self.display_callback:
                 self.display_callback(f"Unknown tool: {tool_name}")
 
-        logger.debug("Analysis complete, returning context")
+        logger.info("=== Analysis iteration complete ===")
         return context
         
     def _fetch_files(self, context: AnalysisContext, search_context: str) -> None:
         """Fetch files matching patterns mentioned in the context."""
-        logger.debug(f"Fetching files for context: {search_context}")
+        logger.info(f"File search context: {search_context}")
         
         if self.display_callback:
             self.display_callback(f"Searching for files related to: {search_context}")
@@ -636,12 +645,11 @@ class Analyzer:
         # Extract potential patterns from the context
         patterns = re.findall(r'[\w\-\.\/]+', search_context)
         patterns = [p for p in patterns if len(p) > 3]  # Filter out too short patterns
-        logger.debug(f"Extracted patterns: {patterns}")
         
         all_matching_files = []
         
         for pattern in patterns[:3]:  # Limit to first 3 patterns to avoid overload
-            logger.debug(f"Searching for pattern: {pattern}")
+            logger.info(f"Searching for pattern: {pattern}")
             # Search for files
             matching_files = []
             for root, _, files in os.walk(self.workspace_root):
@@ -650,7 +658,7 @@ class Analyzer:
                         rel_path = os.path.relpath(os.path.join(root, file), self.workspace_root)
                         matching_files.append(rel_path)
             
-            logger.info(f"Found {len(matching_files)} files matching pattern '{pattern}'")
+            logger.info(f"Found {len(matching_files)} files matching '{pattern}'")
             
             # Get file contents for first few matches
             file_contents = []
@@ -664,7 +672,6 @@ class Analyzer:
                         "content": content[:2000]  # First 2000 chars
                     })
                     all_matching_files.append(file_path)
-                    logger.debug(f"Read contents of file: {file_path}")
                 except Exception as e:
                     logger.error(f"Error reading file {file_path}: {str(e)}")
                     if self.display_callback:
@@ -680,13 +687,12 @@ class Analyzer:
                 "result": finding_result,
                 "file_contents": file_contents
             })
-            logger.debug(f"Added finding for pattern '{pattern}'")
         
         # Display result if callback is provided
         if self.display_callback:
             self.display_callback(f"Files found: {len(all_matching_files)}")
             
-        logger.info(f"Completed file search, found total of {len(all_matching_files)} files")
+        logger.info(f"File search complete: Found {len(all_matching_files)} total files")
         
     def _fetch_logs(self, context: AnalysisContext, log_context: str) -> None:
         """Fetch logs from user."""
@@ -711,14 +717,14 @@ class Analyzer:
         Translate a production path to possible local paths using heuristics.
         Returns a list of possible paths to try, in order of likelihood.
         """
-        logger.info(f"Starting path translation for: {production_path}")
+        logger.info(f"=== Starting path translation ===")
+        logger.info(f"LLM requested file: {production_path}")
         logger.info(f"Using workspace root: {self.workspace_root}")
         logger.info(f"Using RVM gemset path: {self.rvm_gemset_path}")
         possible_paths = []
 
         # Clean the path
         production_path = production_path.strip()
-        logger.debug(f"Cleaned path: {production_path}")
 
         if production_path.startswith('/usr/local/bundle/gems/'):
             logger.info("Detected production gem path")
@@ -726,7 +732,6 @@ class Analyzer:
             # Extract gem name and version, and the rest of the path
             gem_path = production_path.replace('/usr/local/bundle/gems/', '')
             gem_parts = gem_path.split('/', 1)
-            logger.debug(f"Gem path parts: {gem_parts}")
             
             if len(gem_parts) == 2:
                 gem_with_version, rest_of_path = gem_parts
@@ -747,30 +752,32 @@ class Analyzer:
                         if gem_matches:
                             # Found at least one version, use the first one
                             found_gem_path = gem_matches[0]
-                            logger.info(f"Found gem at: {found_gem_path}")
                             # Replace the version-specific part of the path with the found version
                             found_version = os.path.basename(found_gem_path).replace(f"{base_gem_name}-", '')
-                            logger.info(f"Using version: {found_version}")
                             rvm_path = os.path.join(self.rvm_gemset_path, 'gems', 
                                                   f"{base_gem_name}-{found_version}",
                                                   rest_of_path)
                             possible_paths.append(rvm_path)
-                            logger.info(f"Added RVM path: {rvm_path}")
-                            logger.info(f"RVM path exists: {os.path.exists(rvm_path)}")
+                            logger.info(f"Found equivalent in RVM gems: {rvm_path}")
                         else:
-                            logger.warning(f"No matching versions found for gem: {base_gem_name}")
+                            logger.info(f"No matching versions found for gem: {base_gem_name}")
                     
                     # Try vendored gem path with any version
                     vendored_pattern = os.path.join(self.workspace_root, 'vendor/bundle/ruby/*/gems', 
                                                   f"{base_gem_name}-*", rest_of_path)
                     logger.debug(f"Looking for vendored gems with pattern: {vendored_pattern}")
                     vendored_matches = glob.glob(vendored_pattern)
+                    for match in vendored_matches:
+                        logger.info(f"Found equivalent in vendor/bundle: {match}")
                     possible_paths.extend(vendored_matches)
-                    logger.info(f"Found vendored paths: {vendored_matches}")
-                else:
-                    logger.warning(f"Could not extract base gem name from: {gem_with_version}")
-            else:
-                logger.warning(f"Could not split gem path properly: {gem_path}")
+
+        elif production_path.startswith('/opt/'):
+            logger.info("Detected /opt/ path")
+            # For paths like /opt/mastodon/..., try mapping to workspace root
+            relative_path = production_path.replace('/opt/mastodon/', '')
+            workspace_path = os.path.join(self.workspace_root, relative_path)
+            possible_paths.append(workspace_path)
+            logger.info(f"Mapped /opt/ path to workspace: {workspace_path}")
 
         elif production_path.startswith('/app/'):
             logger.info("Detected application code path")
@@ -778,27 +785,30 @@ class Analyzer:
             # Map directly to workspace root
             app_path = os.path.join(self.workspace_root, production_path.lstrip('/app/'))
             possible_paths.append(app_path)
-            logger.info(f"Added app path: {app_path}")
-            logger.info(f"App path exists: {os.path.exists(app_path)}")
+            logger.info(f"Mapped /app/ path to workspace: {app_path}")
 
         # Always add the original path as a fallback
         if os.path.isabs(production_path):
             possible_paths.append(production_path)
-            logger.debug(f"Added original absolute path: {production_path}")
+            logger.debug(f"Added original absolute path as fallback")
         else:
             workspace_path = os.path.join(self.workspace_root, production_path)
             possible_paths.append(workspace_path)
-            logger.debug(f"Added workspace-relative path: {workspace_path}")
+            logger.debug(f"Added workspace-relative path as fallback")
         
-        logger.info(f"Final path candidates for {production_path}:")
-        for i, path in enumerate(possible_paths, 1):
-            logger.info(f"{i}. {path} (exists: {os.path.exists(path)})")
+        # Log summary of path translation
+        logger.info("=== Path translation summary ===")
+        for path in possible_paths:
+            exists = os.path.exists(path)
+            logger.info(f"Candidate path: {path} (exists: {exists})")
+        logger.info("=== End path translation ===")
         
         return possible_paths
 
     def _fetch_code(self, context: AnalysisContext, code_context: str) -> None:
         """Fetch code based on file and line number hints in the context."""
-        logger.debug(f"Fetching code for context: {code_context}")
+        logger.info(f"=== Starting code fetch ===")
+        logger.info(f"Code context: {code_context}")
         
         if self.display_callback:
             self.display_callback(f"Fetching code related to: {code_context}")
@@ -819,8 +829,6 @@ class Analyzer:
             })
             return
             
-        logger.debug(f"Found file references: {matches}")
-        
         # Process each potential file reference
         for file_path, line_str in matches:
             try:
@@ -829,7 +837,7 @@ class Analyzer:
                 if line_str:
                     line_number = int(line_str)
                 
-                logger.debug(f"Processing file: {file_path} at line {line_number}")
+                logger.info(f"LLM requested file: {file_path} at line {line_number}")
                 
                 # Get possible local paths
                 possible_paths = self._translate_path(file_path)
@@ -839,11 +847,13 @@ class Analyzer:
                 for path in possible_paths:
                     if os.path.exists(path):
                         found_path = path
-                        logger.info(f"Found existing path: {path}")
+                        logger.info(f"Found equivalent file: {path}")
                         break
                 
                 if not found_path:
-                    raise FileNotFoundError(f"File not found in any of the possible locations: {possible_paths}")
+                    error_msg = f"File not found in any of the possible locations: {possible_paths}"
+                    logger.warning(error_msg)
+                    raise FileNotFoundError(error_msg)
                 
                 # Read the file
                 with open(found_path, 'r') as f:
