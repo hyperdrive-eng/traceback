@@ -110,6 +110,10 @@ class TracebackApp(App):
         super().__init__(*args, **kwargs)
         self.root_cause_commands = RootCauseCommands()
         self.current_context = {}
+        self.waiting_for = None  # Track what input we're waiting for
+        self.current_logs = None  # Store the current log content
+        self.current_log_path = None  # Store the current log file path
+        self.llm_model = "claude-3-7-sonnet-20240229"  # LLM model to use
 
     def compose(self) -> ComposeResult:
         """Compose the application layout."""
@@ -135,6 +139,27 @@ class TracebackApp(App):
         chat_log = self.query_one("#chat-log", RichLog)
         input_widget = self.query_one("#user-input", Input)
         
+        # Check if we're waiting for specific input
+        if self.waiting_for:
+            if self.waiting_for == "analyze_file_path":
+                self._process_log_file(user_input)
+                input_widget.value = ""
+                input_widget.placeholder = "Type your message here (Ctrl+I to interrupt)"
+                self.waiting_for = None
+                return
+            elif self.waiting_for == "code_path":
+                self._process_code_request(user_input)
+                input_widget.value = ""
+                input_widget.placeholder = "Type your message here (Ctrl+I to interrupt)"
+                self.waiting_for = None
+                return
+            elif self.waiting_for == "entry_point":
+                self._process_entry_point(user_input)
+                input_widget.value = ""
+                input_widget.placeholder = "Type your message here (Ctrl+I to interrupt)"
+                self.waiting_for = None
+                return
+        
         # Handle command inputs
         if user_input.startswith("/"):
             self._handle_command(user_input)
@@ -147,13 +172,17 @@ class TracebackApp(App):
         # Clear input field
         input_widget.value = ""
 
-        # In a real application, here you would send the message to an AI service
-        # For now, we'll just echo a placeholder response
-        chat_log.write("[bold green]AI:[/] This is a placeholder response.")
+        # If we have logs loaded, treat this as a follow-up question about the logs
+        if self.current_logs:
+            self._process_log_followup(user_input)
+        else:
+            # Regular chat response
+            chat_log.write("[bold green]AI:[/] This is a placeholder response.")
         
     def _handle_command(self, command_text: str) -> None:
         """Handle command inputs."""
         chat_log = self.query_one("#chat-log", RichLog)
+        input_widget = self.query_one("#user-input", Input)
         
         # Split the command and args
         parts = command_text.split(None, 1)
@@ -181,8 +210,16 @@ class TracebackApp(App):
             chat_log.clear()
             chat_log.write("[bold orange]System:[/] Chat history cleared.")
         elif command == "/analyze":
-            # Root cause analysis command
-            self._handle_root_cause_command(command, args_text)
+            # Handle analyze workflow with file path input
+            if not args_text:
+                chat_log.write("[bold orange]System:[/] Please provide a log file path.")
+                # Set the input widget to a special mode to capture the file path
+                self.waiting_for = "analyze_file_path"
+                input_widget.placeholder = "Enter path to log file"
+                return
+            else:
+                # Process the file path directly
+                self._process_log_file(args_text)
         elif command == "/code":
             # Code view command
             self._handle_root_cause_command(command, args_text)
@@ -366,6 +403,351 @@ class TracebackApp(App):
                 self._display_code_result(result["result"])
             elif result_type == "callers":
                 self._display_callers(result["result"])
+
+    def _process_log_file(self, file_path: str) -> None:
+        """Process a log file and send to LLM for analysis."""
+        chat_log = self.query_one("#chat-log", RichLog)
+        
+        # Try to read the log file
+        try:
+            with open(file_path, 'r') as f:
+                log_content = f.read()
+                
+            # Store the log content and path for later reference
+            self.current_logs = log_content
+            self.current_log_path = file_path
+            
+            # Display a sample of the log content
+            chat_log.write(f"[bold green]Loaded logs from:[/] {file_path}")
+            
+            # Get a sample to show (first 5 lines)
+            sample_lines = log_content.split("\n")[:5]
+            chat_log.write("[bold green]Sample of logs:[/]")
+            for line in sample_lines:
+                chat_log.write(f"  {line}")
+            
+            if len(log_content.split("\n")) > 5:
+                chat_log.write("  ...")
+            
+            # Analyze the logs with LLM
+            self._analyze_logs_with_llm(log_content)
+            
+        except Exception as e:
+            chat_log.write(f"[bold red]Error:[/] Could not read file: {str(e)}")
+    
+    def _analyze_logs_with_llm(self, log_content: str) -> None:
+        """Analyze logs with LLM to identify potential issues."""
+        chat_log = self.query_one("#chat-log", RichLog)
+        
+        # Display loading indicator
+        chat_log.write("[bold orange]System:[/] Analyzing logs with AI...")
+        
+        # Define the prompt for log analysis
+        prompt = f"""
+You are an expert system debugging assistant. Analyze the following logs to identify potential issues or errors.
+Focus on:
+1. Error messages and stack traces
+2. Unusual patterns or unexpected behaviors
+3. Potential root causes of issues
+
+After your analysis, suggest one of the following next steps:
+- Examine specific code location (provide file path and line number if possible)
+- Focus on a specific log entry point
+- Provide more context or additional logs
+
+LOGS:
+```
+{log_content[:5000]}  # Limiting to first 5000 chars for demo
+```
+
+Provide your analysis in a clear, structured format with bullet points for key findings.
+"""
+        
+        # In a real implementation, we would call the LLM API here
+        # For demo purposes, we'll simulate an LLM response
+        
+        # Simulate LLM thinking time
+        import time
+        time.sleep(2)
+        
+        # Sample LLM response
+        analysis = """
+I've analyzed the logs and identified several potential issues:
+
+• Error pattern detected: Several "Connection timeout" errors appearing at 2023-04-12 15:23:45
+• Stack trace points to a possible issue in the network handler module
+• The error occurs consistently when processing large data payloads
+• Database connection appears to be dropping intermittently
+
+Based on the error patterns, I recommend:
+
+1. Examining the code at `/src/network/handler.py:156` where the timeout exception is being caught
+2. Checking the database connection pool configuration
+3. Looking for memory leaks in the request processing pipeline
+
+Would you like me to focus on:
+- The network handler code
+- The database connection issues
+- The memory usage patterns
+"""
+        
+        # Display the LLM analysis
+        chat_log.write(f"[bold green]AI Analysis:[/] {analysis}")
+        
+    def _process_code_request(self, code_path: str) -> None:
+        """Process a request to examine specific code."""
+        chat_log = self.query_one("#chat-log", RichLog)
+        
+        # Check if the code path is in the correct format
+        if ":" not in code_path:
+            chat_log.write("[bold red]Error:[/] Code path should be in the format 'file_path:line_number'")
+            return
+            
+        file_path, line_str = code_path.split(":", 1)
+        
+        try:
+            line_number = int(line_str)
+        except ValueError:
+            chat_log.write("[bold red]Error:[/] Line number must be an integer")
+            return
+            
+        # Try to read the code file
+        try:
+            with open(file_path, 'r') as f:
+                code_content = f.readlines()
+                
+            # Get code context (20 lines before and after)
+            start_line = max(0, line_number - 20)
+            end_line = min(len(code_content), line_number + 20)
+            
+            code_context = "".join(code_content[start_line:end_line])
+            
+            # Display the code
+            chat_log.write(f"[bold green]Code from {file_path}:[/]")
+            
+            # Format with line numbers
+            formatted_code = ""
+            for i, line in enumerate(code_content[start_line:end_line], start=start_line+1):
+                prefix = "→ " if i == line_number else "  "
+                formatted_code += f"{prefix}{i}: {line}"
+                
+            chat_log.write(f"```\n{formatted_code}```")
+            
+            # Analyze the code with LLM
+            self._analyze_code_with_llm(code_context, file_path, line_number)
+            
+        except Exception as e:
+            chat_log.write(f"[bold red]Error:[/] Could not read file: {str(e)}")
+    
+    def _analyze_code_with_llm(self, code_context: str, file_path: str, line_number: int) -> None:
+        """Analyze code with LLM to identify potential issues."""
+        chat_log = self.query_one("#chat-log", RichLog)
+        
+        # Display loading indicator
+        chat_log.write("[bold orange]System:[/] Analyzing code with AI...")
+        
+        # Define the prompt for code analysis
+        prompt = f"""
+You are an expert programming debugging assistant. Analyze the following code to identify potential issues or bugs.
+Focus on line {line_number} and its surrounding context.
+
+FILE: {file_path}
+```
+{code_context}
+```
+
+Based on the logs that led us here and this code:
+1. Identify any potential bugs, edge cases, or issues in this code
+2. Explain how this code might relate to the log errors we observed
+3. Suggest specific fixes or improvements
+
+Provide your analysis in a clear, structured format with bullet points for key findings.
+"""
+        
+        # In a real implementation, we would call the LLM API here
+        # For demo purposes, we'll simulate an LLM response
+        
+        # Simulate LLM thinking time
+        import time
+        time.sleep(2)
+        
+        # Sample LLM response
+        analysis = f"""
+I've analyzed the code at {file_path}:{line_number} and here are my findings:
+
+• The issue appears to be in the error handling logic around line {line_number}
+• The code is not properly checking for timeout conditions before attempting to access response data
+• There's a potential race condition in the connection management
+• Error recovery doesn't properly clean up resources
+
+Suggested fixes:
+1. Add explicit timeout handling with proper error messages
+2. Implement retry logic with exponential backoff
+3. Ensure connections are properly closed in all error paths
+4. Add logging to capture more context when errors occur
+
+This code is directly related to the "Connection timeout" errors in the logs. The timeout exception is being caught but not properly handled, leading to cascading failures.
+"""
+        
+        # Display the LLM analysis
+        chat_log.write(f"[bold green]AI Code Analysis:[/] {analysis}")
+    
+    def _process_entry_point(self, entry_point: str) -> None:
+        """Process a specific log entry point for analysis."""
+        chat_log = self.query_one("#chat-log", RichLog)
+        
+        if not self.current_logs:
+            chat_log.write("[bold red]Error:[/] No logs have been loaded. Use /analyze to load logs first.")
+            return
+            
+        # Find the entry point in the logs
+        logs = self.current_logs.split("\n")
+        matching_lines = []
+        
+        for i, line in enumerate(logs):
+            if entry_point in line:
+                # Get some context (5 lines before and after)
+                start = max(0, i - 5)
+                end = min(len(logs), i + 6)
+                matching_lines.append((i, "\n".join(logs[start:end])))
+                
+        if not matching_lines:
+            chat_log.write(f"[bold red]Error:[/] Entry point '{entry_point}' not found in logs.")
+            return
+            
+        # Show the matching entry points
+        chat_log.write(f"[bold green]Found {len(matching_lines)} matches for entry point:[/] {entry_point}")
+        
+        for i, (line_num, context) in enumerate(matching_lines[:3]):  # Limit to first 3 matches
+            chat_log.write(f"[bold]Match {i+1} at line {line_num+1}:[/]")
+            chat_log.write(f"```\n{context}\n```")
+            
+        if len(matching_lines) > 3:
+            chat_log.write(f"[bold]...and {len(matching_lines) - 3} more matches[/]")
+            
+        # Analyze the first match with LLM
+        self._analyze_entry_point_with_llm(matching_lines[0][1], entry_point)
+    
+    def _analyze_entry_point_with_llm(self, log_context: str, entry_point: str) -> None:
+        """Analyze a specific log entry point with LLM."""
+        chat_log = self.query_one("#chat-log", RichLog)
+        
+        # Display loading indicator
+        chat_log.write("[bold orange]System:[/] Analyzing entry point with AI...")
+        
+        # Define the prompt for entry point analysis
+        prompt = f"""
+You are an expert system debugging assistant. Analyze the following log section focused on the entry point: "{entry_point}".
+
+LOG CONTEXT:
+```
+{log_context}
+```
+
+Based on this log section:
+1. Identify what happened at this entry point
+2. Explain how this relates to the overall issue we're investigating
+3. Suggest what code or component we should examine next
+4. Identify any patterns or anomalies around this entry point
+
+Provide your analysis in a clear, structured format with bullet points for key findings.
+"""
+        
+        # In a real implementation, we would call the LLM API here
+        # For demo purposes, we'll simulate an LLM response
+        
+        # Simulate LLM thinking time
+        import time
+        time.sleep(2)
+        
+        # Sample LLM response
+        analysis = f"""
+I've analyzed the logs around the entry point "{entry_point}" and here are my findings:
+
+• This entry point marks where the system started experiencing connection issues
+• There's a pattern of increasing response times just before the errors appear
+• The error is triggered during a high-load period (notice the increased request frequency)
+• There appears to be a resource exhaustion issue (possibly connection pool or memory)
+
+This entry point is significant because:
+1. It's the first occurrence of network delays before the cascade of failures
+2. The timestamp correlates with the start of system degradation
+3. The user request that triggered this was processing an unusually large payload
+
+I recommend examining:
+- The connection pool management code
+- Resource cleanup in the request handling pipeline
+- Any recent changes to the network timeout configuration
+"""
+        
+        # Display the LLM analysis
+        chat_log.write(f"[bold green]AI Entry Point Analysis:[/] {analysis}")
+    
+    def _process_log_followup(self, question: str) -> None:
+        """Process a follow-up question about the logs."""
+        chat_log = self.query_one("#chat-log", RichLog)
+        
+        if not self.current_logs:
+            chat_log.write("[bold red]Error:[/] No logs have been loaded. Use /analyze to load logs first.")
+            return
+            
+        # Display loading indicator
+        chat_log.write("[bold orange]System:[/] Processing your question...")
+        
+        # Define the prompt for follow-up question
+        prompt = f"""
+You are an expert system debugging assistant. Answer the following question about the logs:
+
+QUESTION: {question}
+
+LOGS:
+```
+{self.current_logs[:5000]}  # Limiting to first 5000 chars for demo
+```
+
+Provide a clear, concise answer based on the log content. If you need more information or context, 
+specify what additional details would be helpful.
+"""
+        
+        # In a real implementation, we would call the LLM API here
+        # For demo purposes, we'll simulate an LLM response
+        
+        # Simulate LLM thinking time
+        import time
+        time.sleep(2)
+        
+        # Sample LLM response based on the question
+        if "error" in question.lower():
+            answer = """
+The main errors in the logs are:
+
+1. Connection timeouts occurring at regular intervals
+2. Database query failures with "too many connections" errors
+3. Memory allocation errors in the cache layer
+4. Several instances of request handling threads being terminated unexpectedly
+
+The most critical appears to be the connection pool exhaustion, which is causing cascading failures in other components.
+"""
+        elif "time" in question.lower() or "when" in question.lower():
+            answer = """
+The issues began at 2023-04-12 15:23:45 UTC, with the first connection timeout.
+The system completely degraded by 15:27:30, about 4 minutes later.
+The pattern shows a gradual increase in error frequency, suggesting a resource leak or cascading failure.
+"""
+        else:
+            answer = """
+Based on the logs, the root cause appears to be connection pool exhaustion. The system is not properly closing database connections, which eventually leads to the "too many connections" errors.
+
+This is likely caused by:
+1. Missing connection cleanup in error handling paths
+2. No timeout on idle connections
+3. No maximum lifetime setting for connections
+
+The fix would involve reviewing connection management code, particularly ensuring connections are returned to the pool or closed in all code paths, including error handlers.
+"""
+        
+        # Display the LLM response
+        chat_log.write(f"[bold green]AI:[/] {answer}")
 
     def action_interrupt(self) -> None:
         """Interrupt the current AI response."""
