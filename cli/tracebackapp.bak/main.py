@@ -3,7 +3,7 @@
 import typer
 from typing import Optional
 
-from traceback.tui.app import TracebackApp
+from tracebackapp.tui.app import TracebackApp
 
 app = typer.Typer(
     name="traceback",

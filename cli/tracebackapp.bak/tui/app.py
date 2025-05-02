@@ -348,41 +348,33 @@ class TracebackApp(App):
         return args
     
     def _display_analysis_result(self, result: Dict[str, Any]) -> None:
-        """Display the analysis result and handle next steps."""
+        """Display the root cause analysis result."""
         chat_log = self.query_one("#chat-log", RichLog)
         
         # Display the analysis
-        if "analysis" in result:
-            chat_log.write("[bold green]Analysis:[/]")
-            chat_log.write(result["analysis"])
-            
+        if "analysis" in result and result["analysis"]:
+            chat_log.write(f"[bold green]Analysis:[/] {result['analysis']}")
+        
         # Display potential causes
         if "potential_causes" in result and result["potential_causes"]:
-            chat_log.write("\n[bold green]Potential Causes:[/]")
-            for cause in result["potential_causes"]:
-                chat_log.write(f"• {cause}")
-                
+            chat_log.write("[bold green]Potential Causes:[/]")
+            for i, cause in enumerate(result["potential_causes"]):
+                cause_text = f"{i+1}. "
+                if "file_path" in cause:
+                    cause_text += f"{cause['file_path']}:{cause.get('line', 1)} - "
+                if "context" in cause:
+                    cause_text += cause["context"]
+                chat_log.write(cause_text)
+        
         # Display next steps as options
         if "next_steps" in result and result["next_steps"]:
-            chat_log.write("\n[bold green]Next Steps:[/]")
-            
-            # Store options for selection
-            self.current_options = result["next_steps"]
-            
-            for i, step in enumerate(result["next_steps"], 1):
-                if isinstance(step, dict):
-                    # Handle structured step
-                    if step.get("type") == "present_options":
-                        chat_log.write(f"\n{step['message']}")
-                    elif step.get("type") in ["send_code", "get_callers", "log_segment"]:
-                        chat_log.write(f"{i}. {step.get('message', 'Examine')} at {step.get('file_path')}:{step.get('line', '')}")
-                    else:
-                        chat_log.write(f"{i}. {step.get('message', str(step))}")
-                else:
-                    # Handle simple string step
-                    chat_log.write(f"{i}. {step}")
-                    
-            chat_log.write("\n[bold yellow]Use /select <number> to choose a next step[/]")
+            chat_log.write("[bold green]Next Steps:[/]")
+            for i, step in enumerate(result["next_steps"]):
+                step_text = f"{i+1}. {step.get('message', '')}"
+                chat_log.write(step_text)
+                
+            # Display selection instructions
+            chat_log.write("[bold]Use /select <number> to choose an option[/]")
     
     def _display_code_result(self, result: Dict[str, Any]) -> None:
         """Display code view result."""
@@ -510,27 +502,42 @@ class TracebackApp(App):
             
             # Prompt user for API key
             self._prompt_for_api_key()
-            return
             
-        # Create display callback for analysis results
-        def display_analysis(message: str) -> None:
-            if message.startswith("Root Cause Analysis:"):
-                chat_log.write("[bold green]AI Root Cause:[/]")
-            else:
-                chat_log.write("[bold green]AI Analysis:[/]")
-            chat_log.write(message)
+            # Fallback to simulated response in the meantime
+            import time
+            time.sleep(2)
             
-        # Start recursive analysis
-        try:
-            # Create analyzer
-            analyzer = self.root_cause_commands.analyzer
-            
-            # Start analysis with callback for displaying results
-            analyzer.analyze(log_content, display_callback=display_analysis)
-            
-        except Exception as e:
-            chat_log.write(f"[bold red]Error:[/] Failed to analyze logs: {str(e)}")
-    
+            # Sample LLM response
+            analysis = """
+I've analyzed the logs and identified several potential issues:
+
+• Error pattern detected: Several "Connection timeout" errors appearing at 2023-04-12 15:23:45
+• Stack trace points to a possible issue in the network handler module
+• The error occurs consistently when processing large data payloads
+• Database connection appears to be dropping intermittently
+
+Based on the error patterns, I recommend:
+
+1. Examining the code at `/src/network/handler.py:156` where the timeout exception is being caught
+2. Checking the database connection pool configuration
+3. Looking for memory leaks in the request processing pipeline
+
+Would you like me to focus on:
+- The network handler code
+- The database connection issues
+- The memory usage patterns
+"""
+            chat_log.write("[bold yellow]Note:[/] Using simulated response (API key not set). Enter your API key to use Claude.")
+        else:
+            # Use the real Claude API
+            try:
+                analysis = self.claude.analyze_logs(log_content)
+            except Exception as e:
+                analysis = f"Error analyzing logs: {str(e)}"
+                
+        # Display the LLM analysis
+        chat_log.write(f"[bold green]AI Analysis:[/] {analysis}")
+        
     def _process_code_request(self, code_path: str) -> None:
         """Process a request to examine specific code."""
         chat_log = self.query_one("#chat-log", RichLog)

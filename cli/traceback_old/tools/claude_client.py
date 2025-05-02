@@ -6,33 +6,16 @@ from typing import Dict, Any, List, Optional, Union
 from dataclasses import dataclass
 import requests
 import logging
-import urllib3
 
 # Configure logging
-log_dir = os.path.expanduser("~/.traceback")
-os.makedirs(log_dir, exist_ok=True)  # Ensure .traceback directory exists
-log_file_path = os.path.join(log_dir, "claude_api.log")
-
-# Disable requests and urllib3 debug logging
-logging.getLogger("requests").setLevel(logging.WARNING)
-logging.getLogger("urllib3").setLevel(logging.WARNING)
-
-# Configure our logger
-logger = logging.getLogger("claude_client")
-logger.setLevel(logging.DEBUG)
-
-# Create file handler
-file_handler = logging.FileHandler(log_file_path)
-file_handler.setLevel(logging.DEBUG)
-
-# Create formatter
-formatter = logging.Formatter('%(asctime)s [%(levelname)s] %(name)s: %(message)s')
-file_handler.setFormatter(formatter)
-
-# Add handler to logger
-logger.addHandler(file_handler)
-# Prevent propagation to avoid duplicate logs
-logger.propagate = False
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(message)s',
+    handlers=[
+        logging.FileHandler('claude_api.log'),
+        logging.StreamHandler()
+    ]
+)
 
 @dataclass
 class ToolResponse:
@@ -40,7 +23,6 @@ class ToolResponse:
     tool_name: str
     output: Any
     next_action: Optional[Dict[str, Any]] = None
-
 
 class ClaudeClient:
     """Client for interacting with Claude API."""
@@ -96,7 +78,8 @@ class ClaudeClient:
             
         self.model = model
         self.api_url = "https://api.anthropic.com/v1/messages"
-        self.max_tokens = 4096
+        self.max_tokens = 4096  # Default max tokens for response
+        self.logger = logging.getLogger(__name__)
 
     def analyze_error(self, error_context: str, current_findings: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
         """
@@ -109,7 +92,6 @@ class ClaudeClient:
         Returns:
             Dict containing analysis and next action
         """
-        logger.debug("Entering analyze_error method")
         findings_str = ""
         if current_findings:
             findings_str = "\nCurrent Findings:\n" + "\n".join(
@@ -117,65 +99,37 @@ class ClaudeClient:
                 for finding in current_findings
             )
 
-        # Extract workspace and RVM info from error_context if it contains it
-        workspace_info = ""
-        if "Workspace root path:" in error_context:
-            workspace_lines = [line for line in error_context.split('\n') 
-                             if line.startswith(("Workspace root path:", "RVM Gemset path:"))]
-            workspace_info = "\n".join(workspace_lines) + "\n\n"
-            # Remove these lines from error_context to avoid duplication
-            error_context = "\n".join(line for line in error_context.split('\n') 
-                                    if not line.startswith(("Workspace root path:", "RVM Gemset path:")))
-
         prompt = f"""
-You are an expert system debugging assistant. Your job is to analyze error contexts and determine the appropriate next step using available tools.
+You are an expert system debugging assistant. Analyze the following error context and determine the next step in debugging.
 
 ERROR CONTEXT:
 {error_context}
-
-Finding so far:
 {findings_str}
 
 Analyze the error and choose the appropriate tool to continue the investigation. If you have enough information to determine the root cause, use show_root_cause. Otherwise, use get_info to gather more specific information.
 """
-        response = self._call_claude(prompt)
-        logger.debug(f"Received response from _call_claude: {response}")
+        response = self._call_claude(prompt, tools=self.TOOLS)
         
-        # Transform the response into the expected format
-        if response.get("content") and len(response["content"]) > 0:
-            content = response["content"][0]
-            if content.get("type") == "tool_use":
-                return {
-                    "tool": content.get("name"),
-                    "params": content.get("input", {}),
-                    "analysis": ""  # Tool use doesn't typically include analysis text
-                }
-            else:
-                # If it's a text response
-                return {
-                    "tool": None,
-                    "params": {},
-                    "analysis": content.get("text", "")
-                }
-        
-        # Fallback for unexpected response format
-        return {
-            "tool": None,
-            "params": {},
-            "analysis": "Failed to parse Claude response"
-        }
+        try:
+            return json.loads(response)
+        except json.JSONDecodeError:
+            # If response isn't JSON, wrap it in a basic structure
+            return {
+                "analysis": response,
+                "next_action": None
+            }
 
-    def _call_claude(self, prompt: str) -> Dict[str, Any]:
+    def _call_claude(self, prompt: str, tools: Optional[List[Dict[str, Any]]] = None) -> str:
         """
         Call Claude API with a prompt.
         
         Args:
             prompt: The prompt to send to Claude
+            tools: Optional list of tools to make available to Claude
             
         Returns:
-            Dict containing the full Claude API response
+            Claude's response text
         """
-        logger.debug("Entering _call_claude method")
         headers = {
             "x-api-key": self.api_key,
             "anthropic-version": "2023-06-01",
@@ -185,31 +139,32 @@ Analyze the error and choose the appropriate tool to continue the investigation.
         data = {
             "model": self.model,
             "max_tokens": self.max_tokens,
-            "messages": [
-                {
-                    "role": "user",
-                    "content": prompt
-                }
-            ],
-            "tools": self.TOOLS,
-            "tool_choice": {"type": "any"}
+            "messages": [{"role": "user", "content": prompt}]
         }
         
+        if tools:
+            data["tools"] = tools
+            data["tool_choice"] = "any"
+            
         # Log the API request
-        logger.info("Calling Claude API:")
-        logger.info(f"Prompt: {prompt}")
-        
+        self.logger.info("Calling Claude API:")
+        self.logger.info(f"Prompt: {prompt[:500]}..." if len(prompt) > 500 else f"Prompt: {prompt}")
+        if tools:
+            self.logger.info(f"Tools: {json.dumps(tools, indent=2)}")
+            
         try:
             response = requests.post(self.api_url, headers=headers, json=data)
             response.raise_for_status()
             
-            # Log the API response
-            logger.info("Claude API Response:")
-            logger.info(f"Response: {response.json()}")
+            response_json = response.json()
+            response_text = response_json["content"][0]["text"]
             
-            # Return the raw JSON response
-            return response.json()
+            # Log the API response
+            self.logger.info("Claude API Response:")
+            self.logger.info(f"Response: {response_text[:500]}..." if len(response_text) > 500 else f"Response: {response_text}")
+            
+            return response_text
             
         except Exception as e:
-            logger.error(f"Error calling Claude API: {str(e)}")
+            self.logger.error(f"Error calling Claude API: {str(e)}")
             raise

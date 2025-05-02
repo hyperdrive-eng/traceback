@@ -8,7 +8,7 @@ from typing import Dict, Any, List, Optional
 class ClaudeClient:
     """Client for interacting with Claude API."""
     
-    def __init__(self, api_key: Optional[str] = None, model: str = "claude-3-7-sonnet-20240229"):
+    def __init__(self, api_key: Optional[str] = None, model: str = "claude-3-7-sonnet-20250219"):
         """
         Initialize Claude API client.
         
