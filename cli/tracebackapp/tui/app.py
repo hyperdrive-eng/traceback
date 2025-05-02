@@ -408,6 +408,14 @@ class TracebackApp(App):
         """Process a log file and send to LLM for analysis."""
         chat_log = self.query_one("#chat-log", RichLog)
         
+        # Check if this is actually a command that was misinterpreted as a path
+        if file_path.startswith("/") and len(file_path.split()) == 1 and not os.path.exists(file_path):
+            known_commands = ["/help", "/clear", "/analyze", "/code", "/log", "/stack", "/callers", "/select"]
+            if file_path in known_commands:
+                chat_log.write(f"[bold orange]System:[/] '{file_path}' appears to be a command, not a file path.")
+                chat_log.write("[bold orange]System:[/] Please provide an absolute path to a log file.")
+                return
+        
         # Try to read the log file
         try:
             with open(file_path, 'r') as f:
