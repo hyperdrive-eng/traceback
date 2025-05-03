@@ -204,6 +204,17 @@ class ClaudeClient:
             # Wait if rate limiting is needed
             self.rate_limit_state.wait_if_needed()
             
+            # Log the findings being sent to LLM
+            logger.info("=== Sending findings to LLM ===")
+            logger.info(f"Number of findings: {len(findings)}")
+            for idx, finding in enumerate(findings, 1):
+                logger.info(f"Finding {idx}:")
+                logger.info(f"  Type: {finding.get('type', 'Unknown')}")
+                logger.info(f"  Result: {finding.get('result', 'No result')}")
+                if 'metadata' in finding:
+                    logger.info(f"  Metadata: {json.dumps(finding['metadata'], indent=2)}")
+            logger.info("=== End of findings ===")
+            
             # Format findings for the prompt
             findings_str = ""
             if findings:

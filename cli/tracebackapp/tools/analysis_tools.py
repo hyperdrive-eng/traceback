@@ -115,7 +115,7 @@ class AnalysisContext:
 
 class Analyzer:
     """Analyzer for debugging issues using Claude."""
-    
+
     def __init__(self, workspace_root: Optional[str] = None):
         """Initialize the analyzer."""
         self.workspace_root = workspace_root or os.getcwd()
@@ -172,14 +172,14 @@ class Analyzer:
         logger.info(f"Input length: {len(current_input)} chars")
         logger.info(f"Current findings count: {len(context.current_findings)}")
         logger.info(f"Previously analyzed pages: {analyzed_pages}")
-        
+            
         # Get Claude's analysis and tool suggestion
         response = self.claude.analyze_error(current_input, context.current_findings)
         
         # Remove the analyzed_pages finding so it doesn't accumulate
         if context.current_findings and context.current_findings[-1].get("type") == "analyzed_pages":
             context.current_findings.pop()
-        
+            
         if not response or 'tool' not in response:
             logger.error("Invalid response from Claude")
             return
@@ -187,19 +187,19 @@ class Analyzer:
         tool_name = response.get('tool')
         tool_params = response.get('params', {})
         analysis = response.get('analysis', '')
-        
+            
         if display_callback and analysis:
             display_callback(analysis)
-        
-        # Execute the suggested tool
+
         try:
+            # Execute the suggested tool
             if tool_name == 'fetch_files':
                 search_patterns = tool_params.get('search_patterns', [])
                 if search_patterns:
                     self._fetch_files(context, search_patterns)
                     # Continue analysis with next iteration
                     self.analyze(initial_input, display_callback, context, iteration + 1)
-                    
+                
             elif tool_name == 'fetch_logs':
                 page_number = tool_params.get('page_number')
                 if page_number is not None:
@@ -236,7 +236,7 @@ class Analyzer:
             else:
                 logger.warning(f"Unknown tool: {tool_name}")
                 return
-                
+                    
             # If we have more pages to analyze, continue with next page
             if context.advance_page():
                 self.analyze(initial_input, display_callback, context, iteration + 1)
@@ -248,6 +248,34 @@ class Analyzer:
             # Try to continue with next page if available
             if context.advance_page():
                 self.analyze(initial_input, display_callback, context, iteration + 1)
+
+    def _get_gitignore_dirs(self) -> List[str]:
+        """Get directory patterns from .gitignore file."""
+        gitignore_path = os.path.join(self.workspace_root, '.gitignore')
+        dirs_to_exclude = set()
+        
+        try:
+            if os.path.exists(gitignore_path):
+                with open(gitignore_path, 'r') as f:
+                    for line in f:
+                        line = line.strip()
+                        # Skip comments and empty lines
+                        if not line or line.startswith('#'):
+                            continue
+                        # Look for directory patterns (ending with /)
+                        if line.endswith('/'):
+                            dirs_to_exclude.add(line.rstrip('/'))
+                        # Also add common build/binary directories if not already specified
+                dirs_to_exclude.update(['target', 'node_modules', '.git', 'dist', 'build'])
+                logger.info(f"Found directories to exclude: {sorted(dirs_to_exclude)}")
+            else:
+                logger.info("No .gitignore file found, using default exclusions")
+                dirs_to_exclude = {'target', 'node_modules', '.git', 'dist', 'build'}
+        except Exception as e:
+            logger.error(f"Error reading .gitignore: {str(e)}")
+            dirs_to_exclude = {'target', 'node_modules', '.git', 'dist', 'build'}
+            
+        return sorted(list(dirs_to_exclude))
         
     def _fetch_files(self, context: AnalysisContext, search_patterns: List[str]) -> None:
         """
@@ -257,38 +285,79 @@ class Analyzer:
             context: Analysis context
             search_patterns: List of strings to search for in files
         """
-        logger.info("=== Starting file fetch ===")
-        logger.info(f"Search patterns: {search_patterns}")
+        import time
+        start_time = time.time()
+        
+        logger.info("=" * 50)
+        logger.info("Starting file search operation")
+        logger.info("=" * 50)
+        logger.info(f"Search patterns ({len(search_patterns)}): {search_patterns}")
+        logger.info(f"Working directory: {os.getcwd()}")
+        logger.info(f"Workspace root: {self.workspace_root}")
         
         if self.display_callback:
             self.display_callback(f"Searching for files matching patterns: {', '.join(search_patterns)}")
             
         found_files = set()
+        patterns_matched = {pattern: 0 for pattern in search_patterns}
+        
+        # Get directories to exclude from .gitignore
+        exclude_dirs = self._get_gitignore_dirs()
+        exclude_args = []
+        for dir_name in exclude_dirs:
+            exclude_args.extend(['--exclude-dir', dir_name])
         
         # Search for each pattern
         for pattern in search_patterns:
+            pattern_start_time = time.time()
+            logger.info("-" * 40)
+            logger.info(f"Processing pattern: {pattern}")
+            
             try:
-                # Use grep instead of ripgrep for better compatibility
-                cmd = ['grep', '-r', '-l', pattern]
+                # Use grep with recursive search and exclusions
+                grep_cmd = ['grep', '-r', '-l', *exclude_args, pattern]
                 if self.workspace_root:
-                    cmd.append(self.workspace_root)
+                    grep_cmd.append(self.workspace_root)
                 else:
-                    cmd.append('.')
-                    
-                result = subprocess.run(cmd, capture_output=True, text=True)
+                    grep_cmd.append('.')
+            
+                logger.info(f"Running grep command: {' '.join(grep_cmd)}")
+                grep_result = subprocess.run(grep_cmd, capture_output=True, text=True)
+            
+                # grep returns 0 if matches found, 1 if no matches (not an error)
+                if grep_result.returncode not in [0, 1]:
+                    error = f"Grep command failed: {grep_result.stderr}"
+                    logger.error(error)
+                    continue
                 
-                if result.returncode not in [0, 1]:  # 1 means no matches, which is ok
-                    raise subprocess.CalledProcessError(result.returncode, cmd, result.stdout, result.stderr)
-                    
-                # Add found files to set
-                for file in result.stdout.splitlines():
+                # Process matches
+                matches = grep_result.stdout.splitlines()
+                for file in matches:
                     found_files.add(file)
-                    
+                    patterns_matched[pattern] += 1
+                    logger.info(f"Match found: {file}")
+                
+                pattern_duration = time.time() - pattern_start_time
+                logger.info(f"Pattern '{pattern}' completed in {pattern_duration:.2f}s")
+                logger.info(f"Found {patterns_matched[pattern]} matches for this pattern")
+                
             except Exception as e:
                 error = f"Error searching for pattern '{pattern}': {str(e)}"
                 logger.error(error)
                 if self.display_callback:
                     self.display_callback(error)
+        
+        total_duration = time.time() - start_time
+        
+        # Log final statistics
+        logger.info("=" * 50)
+        logger.info("Search operation completed")
+        logger.info(f"Total time: {total_duration:.2f}s")
+        logger.info(f"Total unique files with matches: {len(found_files)}")
+        logger.info("Pattern matches:")
+        for pattern, count in patterns_matched.items():
+            logger.info(f"  - '{pattern}': {count} files")
+        logger.info("=" * 50)
         
         # Add finding with results
         if found_files:
@@ -296,7 +365,11 @@ class Analyzer:
             context.current_findings.append({
                 "type": "fetch_files",
                 "context": f"Search patterns: {', '.join(search_patterns)}",
-                "result": result
+                "result": result,
+                "stats": {
+                    "duration": f"{total_duration:.2f}s",
+                    "matches_by_pattern": patterns_matched
+                }
             })
             
             logger.info(f"Found {len(found_files)} files matching patterns")
@@ -307,13 +380,17 @@ class Analyzer:
             context.current_findings.append({
                 "type": "fetch_files",
                 "context": f"Search patterns: {', '.join(search_patterns)}",
-                "result": result
+                "result": result,
+                "stats": {
+                    "duration": f"{total_duration:.2f}s",
+                    "matches_by_pattern": patterns_matched
+                }
             })
             
             logger.info("No files found matching patterns")
             if self.display_callback:
                 self.display_callback("No files found matching patterns")
-        
+
     def _fetch_logs(self, context: AnalysisContext, page_number: int) -> None:
         """
         Fetch a specific page of logs.
@@ -360,7 +437,7 @@ class Analyzer:
             })
             if self.display_callback:
                 self.display_callback(error)
-        
+
     def _fetch_code(self, context: AnalysisContext, filename: str, line_number: int) -> None:
         """Fetch code based on file and line number hints in the context."""
         logger.info(f"=== Starting code fetch ===")
@@ -419,7 +496,7 @@ class Analyzer:
             })
             if self.display_callback:
                 self.display_callback(error)
-        
+
     def _translate_path(self, filename: str) -> List[str]:
         """
         Translate a filename to possible local paths.
