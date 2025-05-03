@@ -119,23 +119,31 @@ class ClaudeClient:
                         "type": "array",
                         "items": {"type": "string"},
                         "description": "List of strings or patterns to search for in files"
+                    },
+                    "currentAnalysis": {
+                        "type": "string",
+                        "description": "Current state of analysis - include your ongoing analysis, findings, and hypotheses"
                     }
                 },
-                "required": ["search_patterns"]
+                "required": ["search_patterns", "currentAnalysis"]
             }
         },
         {
             "name": "fetch_logs",
-            "description": "Fetch a specific page of logs for analysis. Pages are numbered from 1 to total_pages. The current page number and total pages will be shown in the analysis.",
+            "description": "Fetch a specific page of logs for analysis. Pages are numbered from 1 to total_pages. Request the next page number to fetch.",
             "input_schema": {
                 "type": "object",
                 "properties": {
                     "page_number": {
                         "type": "integer",
-                        "description": "Page number of logs to fetch (1-based indexing)"
+                        "description": "Next page number of logs to fetch (1-based indexing)"
+                    },
+                    "currentAnalysis": {
+                        "type": "string",
+                        "description": "Current state of analysis - include your ongoing analysis, findings, and hypotheses"
                     }
                 },
-                "required": ["page_number"]
+                "required": ["page_number", "currentAnalysis"]
             }
         },
         {
@@ -151,9 +159,13 @@ class ClaudeClient:
                     "line_number": {
                         "type": "integer",
                         "description": "Line number to focus analysis on"
+                    },
+                    "currentAnalysis": {
+                        "type": "string",
+                        "description": "Current state of analysis - include your ongoing analysis, findings, and hypotheses"
                     }
                 },
-                "required": ["filename", "line_number"]
+                "required": ["filename", "line_number", "currentAnalysis"]
             }
         },
         {
@@ -165,9 +177,13 @@ class ClaudeClient:
                     "root_cause": {
                         "type": "string",
                         "description": "Detailed explanation of the root cause and recommendations"
+                    },
+                    "currentAnalysis": {
+                        "type": "string",
+                        "description": "Current state of analysis - include your ongoing analysis, findings, and hypotheses"
                     }
                 },
-                "required": ["root_cause"]
+                "required": ["root_cause", "currentAnalysis"]
             }
         }
     ]
@@ -190,46 +206,67 @@ class ClaudeClient:
         self.rate_limit_state = RateLimitState()
         self.analyzed_pages = set()  # Track which pages have been analyzed
 
-    def analyze_error(self, error_input: str, findings: List[Dict[str, Any]]) -> Dict[str, Any]:
+    def analyze_error(self, error_input: str, findings: Optional[List[Dict[str, Any]]], current_analysis: Optional[str] = None) -> Dict[str, Any]:
         """
         Ask Claude to analyze an error and suggest next steps.
         
-        Returns a dictionary with:
-        - tool: The name of the tool to use (fetch_files, fetch_logs, fetch_code, or show_root_cause)
-        - params: Parameters for the tool
-        - analysis: Any additional analysis text
-        - error: Optional error message if something went wrong
+        Args:
+            error_input: The error or log content to analyze
+            findings: List of all findings so far (contains only metadata, not content)
+            current_analysis: Current state of analysis maintained by LLM
+            
+        Returns:
+            Dictionary with:
+            - tool: The name of the tool to use
+            - params: Parameters for the tool
+            - analysis: Any additional analysis text
+            - error: Optional error message if something went wrong
+            - current_analysis: Updated analysis state from LLM
         """
         try:
             # Wait if rate limiting is needed
             self.rate_limit_state.wait_if_needed()
             
             # Log the findings being sent to LLM
-            logger.info("=== Sending findings to LLM ===")
-            logger.info(f"Number of findings: {len(findings)}")
-            for idx, finding in enumerate(findings, 1):
-                logger.info(f"Finding {idx}:")
-                logger.info(f"  Type: {finding.get('type', 'Unknown')}")
-                logger.info(f"  Result: {finding.get('result', 'No result')}")
-                if 'metadata' in finding:
-                    logger.info(f"  Metadata: {json.dumps(finding['metadata'], indent=2)}")
-            logger.info("=== End of findings ===")
+            if findings:
+                logger.info("=== Sending findings to LLM ===")
+                for finding in findings:
+                    logger.info(f"Finding type: {finding.get('type', 'Unknown')}")
+                    if 'metadata' in finding:
+                        logger.info(f"Metadata: {json.dumps(finding['metadata'], indent=2)}")
+                logger.info("=== End of findings ===")
             
             # Format findings for the prompt
             findings_str = ""
+            page_info = ""
             if findings:
-                findings_str = "\nCurrent Findings:\n" + "\n".join(
-                    f"- {finding.get('type', 'Analysis')}: {finding.get('result', '')}"
-                    for finding in findings
-                )
+                findings_str = "\nPrevious findings:\n"
+                for i, finding in enumerate(findings, 1):
+                    if finding.get('type') == 'fetch_logs':
+                        metadata = finding.get('metadata', {})
+                        findings_str += f"{i}. Analyzed log page {metadata.get('page_number')} of {metadata.get('total_pages')}\n"
+                        if 'context' in finding:
+                            page_info = f"\n=== {finding['context']} ===\n"
+                    elif finding.get('type') == 'fetch_code':
+                        metadata = finding.get('metadata', {})
+                        findings_str += f"{i}. Analyzed code from {metadata.get('filename')}:{metadata.get('line_number')}\n"
+                    elif finding.get('type') == 'fetch_files':
+                        findings_str += f"{i}. File search: {finding.get('context', '')}\n"
+                    elif finding.get('type') == 'analyzed_pages':
+                        findings_str += f"{i}. {finding.get('result', '')}\n"
+                    elif 'error' in finding:
+                        findings_str += f"{i}. Error: {finding['error']}\n"
 
             prompt = f"""
 You are an expert system debugging assistant. Analyze this error and determine the next step.
 
-ERROR CONTEXT:
+ERROR CONTEXT:{page_info}
 {error_input}
 
 {findings_str}
+
+Current Analysis State:
+{current_analysis if current_analysis else "No previous analysis"}
 
 Choose the appropriate tool to continue the investigation:
 1. fetch_files: Search for files containing specific patterns (provide array of search patterns)
@@ -237,10 +274,20 @@ Choose the appropriate tool to continue the investigation:
 3. fetch_code: Get code from a specific file and line (provide filename and line number)
 4. show_root_cause: If you have enough information to determine the root cause
 
-IMPORTANT: If you request a log page, avoid requesting pages you've already seen.
-If you hit a rate limit, wait and try with a smaller context in the next request.
+IMPORTANT INSTRUCTIONS:
+1. Maintain your analysis state in your response. Include key findings, hypotheses, and next steps.
+2. Use the current analysis state to avoid repeating searches or analysis.
+3. If you hit a rate limit, wait and try with a smaller context in the next request.
+4. For fetch_logs:
+   - NEVER request a page that has already been analyzed
+   - ALWAYS use the exact page number specified in "NEXT PAGE TO REQUEST" in the header
+   - If you see "ALL PAGES HAVE BEEN ANALYZED", use show_root_cause instead
 
-Respond with the most appropriate tool and its parameters.
+Respond with:
+1. Your updated analysis of the situation
+2. The most appropriate next tool and its parameters
+
+Your response should clearly separate the analysis state from the tool choice.
 """
             # Call Claude using the SDK
             response = self.client.messages.create(
@@ -257,11 +304,12 @@ Respond with the most appropriate tool and its parameters.
             
             logger.debug(f"Raw API response: {json.dumps(response.model_dump(), indent=2)}")
             
-            # Extract tool choice from content array
+            # Extract tool choice and analysis from content array
             content = response.content
             tool_response = None
+            updated_analysis = None
             
-            # Look for tool_use in content array
+            # Look for tool_use and text in content array
             for item in content:
                 if item.type == 'tool_use':
                     tool_response = {
@@ -270,16 +318,14 @@ Respond with the most appropriate tool and its parameters.
                         'analysis': '',  # Tool calls don't include analysis text
                         'error': None
                     }
-                    break
                 elif item.type == 'text':
-                    # If it's a text response, treat it as analysis
-                    tool_response = {
-                        'tool': None,
-                        'params': {},
-                        'analysis': item.text,
-                        'error': None
-                    }
-                    break
+                    # The text response contains both analysis and state
+                    text_parts = item.text.split("\nTool Choice:", 1)
+                    if len(text_parts) > 1:
+                        updated_analysis = text_parts[0].strip()
+                        # Tool choice is handled by tool_use
+                    else:
+                        updated_analysis = item.text.strip()
             
             # If no valid content found, use empty response
             if not tool_response:
@@ -289,6 +335,9 @@ Respond with the most appropriate tool and its parameters.
                     'analysis': 'No valid response from LLM',
                     'error': None
                 }
+            
+            # Add the updated analysis to the response
+            tool_response['current_analysis'] = updated_analysis
                 
             logger.info(f"LLM suggested tool: {tool_response['tool']}")
             if tool_response['params']:
@@ -307,14 +356,16 @@ Respond with the most appropriate tool and its parameters.
                     'tool': None,
                     'params': {},
                     'analysis': 'Rate limit reached. Please try again with a smaller context.',
-                    'error': 'Rate limit error'
+                    'error': 'Rate limit error',
+                    'current_analysis': current_analysis  # Preserve the current analysis
                 }
             
             return {
                 'tool': None,
                 'params': {},
                 'analysis': '',
-                'error': error_msg
+                'error': error_msg,
+                'current_analysis': current_analysis  # Preserve the current analysis
             }
 
     def analyze_code(self, code: str, file_path: str, line_number: int) -> str:

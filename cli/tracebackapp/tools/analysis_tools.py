@@ -60,6 +60,7 @@ class AnalysisContext:
     overlap_size: int = 5000  # Characters of overlap between pages
     all_logs: str = ""  # Complete log content
     analyzed_pages: Set[int] = None  # Set of analyzed pages (1-based)
+    current_page_content: Optional[str] = None  # Content of the current page being analyzed
     
     def __init__(self, initial_input: str, current_findings: List[Dict[str, Any]] = None):
         self.initial_input = initial_input
@@ -69,6 +70,7 @@ class AnalysisContext:
         self.total_pages = max(1, (len(initial_input) + self.page_size - 1) // (self.page_size - self.overlap_size))
         self.current_page = 0  # Start at first page (0-based internally)
         self.analyzed_pages = set()  # Initialize empty set for analyzed pages
+        self.current_page_content = None  # Initialize current page content as None
         logger.info(f"Total pages calculated: {self.total_pages} (input length: {len(initial_input)}, page size: {self.page_size}, overlap: {self.overlap_size})")
 
     def get_current_page(self) -> str:
@@ -156,9 +158,10 @@ class Analyzer:
         if not context:
             context = AnalysisContext(initial_input)
             
-        # Get current page of input
-        current_input = context.get_current_page()
-        
+        # Get current page of input if not already set
+        if not context.current_page_content:
+            context.current_page_content = context.get_current_page()
+            
         # Add analyzed pages to findings so Claude knows what's been analyzed
         analyzed_pages = context.get_analyzed_pages()
         if analyzed_pages:
@@ -169,12 +172,12 @@ class Analyzer:
             
         # Log the current state
         logger.info(f"=== Starting new LLM analysis ===")
-        logger.info(f"Input length: {len(current_input)} chars")
+        logger.info(f"Input length: {len(context.current_page_content)}")
         logger.info(f"Current findings count: {len(context.current_findings)}")
         logger.info(f"Previously analyzed pages: {analyzed_pages}")
             
-        # Get Claude's analysis and tool suggestion
-        response = self.claude.analyze_error(current_input, context.current_findings)
+        # Pass all findings to Claude along with current page content
+        response = self.claude.analyze_error(context.current_page_content, context.current_findings)
         
         # Remove the analyzed_pages finding so it doesn't accumulate
         if context.current_findings and context.current_findings[-1].get("type") == "analyzed_pages":
@@ -416,12 +419,35 @@ class Analyzer:
             # Get the page content
             page_content = context.get_current_page()
             
-            # Add finding
+            # Calculate next unanalyzed page
+            analyzed_pages = set(context.get_analyzed_pages())
+            all_pages = set(range(1, context.total_pages + 1))
+            unanalyzed_pages = sorted(list(all_pages - analyzed_pages))
+            next_page_msg = ""
+            if unanalyzed_pages:
+                next_page_msg = f"\nNEXT PAGE TO REQUEST: {unanalyzed_pages[0]}"
+            elif len(analyzed_pages) == context.total_pages:
+                next_page_msg = "\nALL PAGES HAVE BEEN ANALYZED"
+            
+            # Add a clear header to the page content
+            header = f"=== LOG PAGE {page_number} OF {context.total_pages} ===\n"
+            header += f"Previously analyzed pages: {context.get_analyzed_pages()}{next_page_msg}\n"
+            header += "=" * 50 + "\n"
+            page_content = header + page_content
+            
+            # Add finding - store only metadata, not content
             context.current_findings.append({
                 "type": "fetch_logs",
-                "context": f"Page {page_number} of {context.total_pages} (analyzed pages: {context.get_analyzed_pages()})",
-                "result": page_content
+                "context": f"Page {page_number} of {context.total_pages} (analyzed pages: {context.get_analyzed_pages()}){next_page_msg}",
+                "metadata": {
+                    "page_number": page_number,
+                    "total_pages": context.total_pages,
+                    "analyzed_pages": context.get_analyzed_pages()
+                }
             })
+
+            # Store the current page content in the context for the next prompt
+            context.current_page_content = page_content
             
             logger.info(f"Successfully fetched page {page_number}")
             if self.display_callback:
