@@ -1,15 +1,11 @@
 """Tools for analyzing logs, stack traces, and code locations."""
 
 import os
-import re
-import ast
-import json
 import logging
 import subprocess
-from dataclasses import dataclass, asdict
-from typing import List, Optional, Callable, Any, Dict, Union, Set, TypedDict
-from pathlib import Path
-from .claude_client import ClaudeClient, ToolResponse
+from dataclasses import dataclass
+from typing import List, Optional, Callable, Any, Dict, Set
+from .claude_client import ClaudeClient
 
 # Configure logging
 log_dir = os.path.expanduser("~/.traceback")
@@ -52,27 +48,31 @@ class StackTraceEntry:
 @dataclass
 class AnalysisContext:
     """Analysis context for a debugging session."""
-    initial_input: str  # Initial input (logs, code, etc.)
-    current_findings: List[Dict[str, Any]]  # Findings so far
+    current_findings: Dict[str, Any]  # Findings so far
     current_page: int = 0  # Current page number (0-based internally)
     total_pages: int = 0  # Total number of pages
     page_size: int = 50000  # Characters per page
     overlap_size: int = 5000  # Characters of overlap between pages
     all_logs: str = ""  # Complete log content
-    analyzed_pages: Set[int] = None  # Set of analyzed pages (1-based)
-    current_page_content: Optional[str] = None  # Content of the current page being analyzed
+    current_page_content: Optional[str] = None  # Content of the current page being analyzed 
+    iterations: int = 0
+    MAX_ITERATIONS = 50
     
-    def __init__(self, initial_input: str, current_findings: List[Dict[str, Any]] = None):
-        self.initial_input = initial_input
-        self.current_findings = current_findings or []
+    def __init__(self, initial_input: str):
+        self.current_findings = {
+            "searched_patterns": set(),
+            "fetched_files": set(),  # This will store individual file paths, not sets of files
+            "fetched_logs_pages": set([1]),
+            "fetched_code": set(),
+            "currentAnalysis": ""
+        }
         self.all_logs = initial_input
         # Calculate total pages based on content length and overlap
         self.total_pages = max(1, (len(initial_input) + self.page_size - 1) // (self.page_size - self.overlap_size))
         self.current_page = 0  # Start at first page (0-based internally)
-        self.analyzed_pages = set()  # Initialize empty set for analyzed pages
-        self.current_page_content = None  # Initialize current page content as None
-        logger.info(f"Total pages calculated: {self.total_pages} (input length: {len(initial_input)}, page size: {self.page_size}, overlap: {self.overlap_size})")
-
+        self.current_page_content = "Logs: \n Page 1 of " + str(self.total_pages) + ":\n" + self.get_current_page() 
+        logger.info(f"Total pages of Logs: {self.total_pages}")
+        
     def get_current_page(self) -> str:
         """Get the current page of logs with overlap."""
         # Calculate start and end positions based on 0-based page number
@@ -135,54 +135,38 @@ class Analyzer:
             
         self.claude = ClaudeClient(api_key=api_key)
         self.display_callback: Optional[Callable[[str], None]] = None
+        self.context = None
         
-    def analyze(self, initial_input: str, display_callback: Optional[Callable[[str], None]] = None, context: Optional[AnalysisContext] = None, iteration: int = 0) -> None:
+    def analyze(self, initial_input: str, display_callback: Optional[Callable[[str], None]]) -> None:
         """
         Analyze input using Claude and execute suggested tools.
         
         Args:
             initial_input: Initial input to analyze (logs, error message, etc)
             display_callback: Optional callback to display progress
-            context: Optional existing analysis context
-            iteration: Current iteration count to prevent infinite recursion
         """
-        # Prevent infinite recursion
-        MAX_ITERATIONS = 50
-        if iteration >= MAX_ITERATIONS:
-            logger.warning(f"Analysis stopped: Maximum iterations ({MAX_ITERATIONS}) reached")
-            if display_callback:
-                display_callback(f"Analysis stopped: Maximum iterations ({MAX_ITERATIONS}) reached")
-            return
-
+        
         # Initialize context if not provided
-        if not context:
-            context = AnalysisContext(initial_input)
-            
-        # Get current page of input if not already set
-        if not context.current_page_content:
-            context.current_page_content = context.get_current_page()
-            
-        # Add analyzed pages to findings so Claude knows what's been analyzed
-        analyzed_pages = context.get_analyzed_pages()
-        if analyzed_pages:
-            context.current_findings.append({
-                "type": "analyzed_pages",
-                "result": f"Previously analyzed pages: {analyzed_pages}"
-            })
+        if not self.context:
+            self.context = AnalysisContext(initial_input)
+        
+        # Store display callback
+        self.display_callback = display_callback
+        
+        # Prevent infinite recursion
+        if self.context.iterations >= self.context.MAX_ITERATIONS:
+            logger.warning(f"Analysis stopped: Maximum iterations ({self.context.MAX_ITERATIONS}) reached")
+            if display_callback:
+                display_callback(f"Analysis stopped: Maximum iterations ({self.context.MAX_ITERATIONS}) reached")
+            return
             
         # Log the current state
         logger.info(f"=== Starting new LLM analysis ===")
-        logger.info(f"Input length: {len(context.current_page_content)}")
-        logger.info(f"Current findings count: {len(context.current_findings)}")
-        logger.info(f"Previously analyzed pages: {analyzed_pages}")
-            
-        # Pass all findings to Claude along with current page content
-        response = self.claude.analyze_error(context.current_page_content, context.current_findings)
+        logger.info(f"Input length: {len(self.context.current_page_content)}")
+        logger.info(f"Current findings: {self.context.current_findings}")
         
-        # Remove the analyzed_pages finding so it doesn't accumulate
-        if context.current_findings and context.current_findings[-1].get("type") == "analyzed_pages":
-            context.current_findings.pop()
-            
+        response = self.claude.analyze_error(self.context.current_page_content, self.context.current_findings)
+        
         if not response or 'tool' not in response:
             logger.error("Invalid response from Claude")
             return
@@ -193,42 +177,48 @@ class Analyzer:
             
         if display_callback and analysis:
             display_callback(analysis)
+        if tool_params.get('currentAnalysis') and display_callback:
+            display_callback(f"Current analysis: {tool_params.get('currentAnalysis')}")
+            self.context.current_findings['currentAnalysis'] = tool_params.get('currentAnalysis')
 
         try:
             # Execute the suggested tool
             if tool_name == 'fetch_files':
                 search_patterns = tool_params.get('search_patterns', [])
                 if search_patterns:
-                    self._fetch_files(context, search_patterns)
-                    # Continue analysis with next iteration
-                    self.analyze(initial_input, display_callback, context, iteration + 1)
-                
+                    self._fetch_files(self.context, search_patterns)
+                    self.context.iterations += 1
+                    display_callback(f"Iteration {self.context.iterations}: Sending fetched files to LLM")
+                    self.analyze(self.context.current_page_content, display_callback)
+                    return
             elif tool_name == 'fetch_logs':
                 page_number = tool_params.get('page_number')
-                if page_number is not None:
-                    # Check if page has already been analyzed
-                    if context.is_page_analyzed(page_number):
-                        logger.warning(f"Page {page_number} has already been analyzed, skipping")
-                        if display_callback:
-                            display_callback(f"Page {page_number} has already been analyzed, skipping")
-                        # Try next page
-                        if context.advance_page():
-                            self.analyze(initial_input, display_callback, context, iteration + 1)
-                        return
-                    
-                    # Mark page as analyzed before fetching
-                    context.mark_page_analyzed(page_number)
-                    self._fetch_logs(context, page_number)
-                    # Continue analysis with next iteration
-                    self.analyze(initial_input, display_callback, context, iteration + 1)
+                
+                if page_number is not None and page_number in self.context.current_findings['fetched_logs_pages']:
+                    logger.warning(f"Page {page_number} has already been analyzed, skipping")
+                    display_callback(f"Page {page_number} has already been analyzed, skipping")
+                
+                if self.context.advance_page():
+                    self.context.current_page_content = "Logs: \n Page " + str(self.context.get_current_page_number()) + " of " + str(self.context.get_total_pages()) + ":\n" + self.context.get_current_page()
+                    self.context.current_findings['fetched_logs_pages'].add(page_number)
+                    display_callback(f"Sending next page to LLM")
+                    self.analyze(self.context.current_page_content, display_callback)
+                else:
+                    self.context.current_page_content = "No more pages to analyze"
+                    display_callback(f"No more pages to analyze. Letting LLM know")
+                    self.analyze(self.context.current_page_content, display_callback)
+
+                return
                     
             elif tool_name == 'fetch_code':
                 filename = tool_params.get('filename')
                 line_number = tool_params.get('line_number')
                 if filename and line_number:
-                    self._fetch_code(context, filename, line_number)
-                    # Continue analysis with next iteration
-                    self.analyze(initial_input, display_callback, context, iteration + 1)
+                    self._fetch_code(self.context, filename, line_number)
+                    self.context.iterations += 1
+                    display_callback(f"Iteration {self.context.iterations}: Sending fetched code to LLM")
+                    self.analyze(self.context.current_page_content, display_callback)
+                    return
                     
             elif tool_name == 'show_root_cause':
                 root_cause = tool_params.get('root_cause', '')
@@ -239,18 +229,10 @@ class Analyzer:
             else:
                 logger.warning(f"Unknown tool: {tool_name}")
                 return
-                    
-            # If we have more pages to analyze, continue with next page
-            if context.advance_page():
-                self.analyze(initial_input, display_callback, context, iteration + 1)
-
+            
         except Exception as e:
             logger.error(f"Error executing tool {tool_name}: {str(e)}")
-            if display_callback:
-                display_callback(f"Error executing tool {tool_name}: {str(e)}")
-            # Try to continue with next page if available
-            if context.advance_page():
-                self.analyze(initial_input, display_callback, context, iteration + 1)
+            display_callback(f"Error executing tool {tool_name}: {str(e)}")
 
     def _get_gitignore_dirs(self) -> List[str]:
         """Get directory patterns from .gitignore file."""
@@ -364,108 +346,31 @@ class Analyzer:
         
         # Add finding with results
         if found_files:
-            result = "Found files:\n" + "\n".join(sorted(found_files))
-            context.current_findings.append({
-                "type": "fetch_files",
-                "context": f"Search patterns: {', '.join(search_patterns)}",
-                "result": result,
-                "stats": {
-                    "duration": f"{total_duration:.2f}s",
-                    "matches_by_pattern": patterns_matched
-                }
-            })
-            
+            # Update the set with individual file paths instead of adding the set itself
+            context.current_findings['fetched_files'].update(found_files)
+            # Convert search patterns list to tuple to make it hashable
+            context.current_findings['searched_patterns'].update(search_patterns)
+            context.current_page_content = f"Found {len(found_files)} files matching patterns: {', '.join(search_patterns)}"
+            context.current_page_content += f"\n\nList of files:\n{'\n'.join(sorted(found_files))}"
             logger.info(f"Found {len(found_files)} files matching patterns")
             if self.display_callback:
                 self.display_callback(f"Found {len(found_files)} files matching patterns")
         else:
-            result = f"No files found matching patterns: {', '.join(search_patterns)}"
-            context.current_findings.append({
-                "type": "fetch_files",
-                "context": f"Search patterns: {', '.join(search_patterns)}",
-                "result": result,
-                "stats": {
-                    "duration": f"{total_duration:.2f}s",
-                    "matches_by_pattern": patterns_matched
-                }
-            })
+            context.current_page_content = f"No files found matching patterns: {', '.join(search_patterns)}"
             
             logger.info("No files found matching patterns")
             if self.display_callback:
                 self.display_callback("No files found matching patterns")
 
-    def _fetch_logs(self, context: AnalysisContext, page_number: int) -> None:
+    def _fetch_code(self, context: AnalysisContext, filename: str, line_number: int) -> None:
         """
-        Fetch a specific page of logs.
+        Fetch code based on file and line number hints in the context.
         
         Args:
             context: Analysis context
-            page_number: Page number to fetch (1-based)
+            filename: Name of the file to fetch
+            line_number: Line number to focus on
         """
-        logger.info("=== Starting log fetch ===")
-        logger.info(f"Requested page: {page_number}")
-        logger.info(f"Previously analyzed pages: {context.get_analyzed_pages()}")
-        
-        if self.display_callback:
-            self.display_callback(f"Fetching log page {page_number} of {context.total_pages}")
-            
-        try:
-            # Convert 1-based page number to 0-based for internal use
-            zero_based_page = page_number - 1
-            
-            # Set the current page
-            context.current_page = zero_based_page
-            
-            # Get the page content
-            page_content = context.get_current_page()
-            
-            # Calculate next unanalyzed page
-            analyzed_pages = set(context.get_analyzed_pages())
-            all_pages = set(range(1, context.total_pages + 1))
-            unanalyzed_pages = sorted(list(all_pages - analyzed_pages))
-            next_page_msg = ""
-            if unanalyzed_pages:
-                next_page_msg = f"\nNEXT PAGE TO REQUEST: {unanalyzed_pages[0]}"
-            elif len(analyzed_pages) == context.total_pages:
-                next_page_msg = "\nALL PAGES HAVE BEEN ANALYZED"
-            
-            # Add a clear header to the page content
-            header = f"=== LOG PAGE {page_number} OF {context.total_pages} ===\n"
-            header += f"Previously analyzed pages: {context.get_analyzed_pages()}{next_page_msg}\n"
-            header += "=" * 50 + "\n"
-            page_content = header + page_content
-            
-            # Add finding - store only metadata, not content
-            context.current_findings.append({
-                "type": "fetch_logs",
-                "context": f"Page {page_number} of {context.total_pages} (analyzed pages: {context.get_analyzed_pages()}){next_page_msg}",
-                "metadata": {
-                    "page_number": page_number,
-                    "total_pages": context.total_pages,
-                    "analyzed_pages": context.get_analyzed_pages()
-                }
-            })
-
-            # Store the current page content in the context for the next prompt
-            context.current_page_content = page_content
-            
-            logger.info(f"Successfully fetched page {page_number}")
-            if self.display_callback:
-                self.display_callback(f"Successfully fetched page {page_number}")
-                
-        except Exception as e:
-            error = f"Error fetching log page {page_number}: {str(e)}"
-            logger.error(error)
-            context.current_findings.append({
-                "type": "fetch_logs",
-                "context": f"Page {page_number}",
-                "result": error
-            })
-            if self.display_callback:
-                self.display_callback(error)
-
-    def _fetch_code(self, context: AnalysisContext, filename: str, line_number: int) -> None:
-        """Fetch code based on file and line number hints in the context."""
         logger.info(f"=== Starting code fetch ===")
         logger.info(f"Code context: {filename} at line {line_number}")
         
@@ -499,14 +404,9 @@ class Analyzer:
             end = min(len(lines), line_number + context_lines + 1)
             code = ''.join(lines[start:end])
             
-            # Add finding
-            result = f"Code from {filename} (line {line_number}):\n\n{code}"
-            context.current_findings.append({
-                "type": "fetch_code",
-                "context": f"{filename}:{line_number}",
-                "result": result,
-                "local_path": found_path
-            })
+            self.context.current_findings['fetched_code'].add((filename, line_number))
+            self.context.current_page_content = f"Code: \n File: {filename} \n Line: {line_number}"
+            self.context.current_page_content += f"\n\nCode:\n{code}"
             
             logger.info(f"Successfully fetched code from {found_path} around line {line_number}")
             if self.display_callback:
@@ -515,11 +415,7 @@ class Analyzer:
         except Exception as e:
             error = f"Error fetching code: {str(e)}"
             logger.error(error)
-            context.current_findings.append({
-                "type": "fetch_code",
-                "context": f"{filename}:{line_number}",
-                "result": error
-            })
+
             if self.display_callback:
                 self.display_callback(error)
 

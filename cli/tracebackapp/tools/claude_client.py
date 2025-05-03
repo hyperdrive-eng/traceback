@@ -227,40 +227,19 @@ class ClaudeClient:
             # Wait if rate limiting is needed
             self.rate_limit_state.wait_if_needed()
             
-            # Log the findings being sent to LLM
-            if findings:
-                logger.info("=== Sending findings to LLM ===")
-                for finding in findings:
-                    logger.info(f"Finding type: {finding.get('type', 'Unknown')}")
-                    if 'metadata' in finding:
-                        logger.info(f"Metadata: {json.dumps(finding['metadata'], indent=2)}")
-                logger.info("=== End of findings ===")
-            
             # Format findings for the prompt
             findings_str = ""
             page_info = ""
             if findings:
                 findings_str = "\nPrevious findings:\n"
-                for i, finding in enumerate(findings, 1):
-                    if finding.get('type') == 'fetch_logs':
-                        metadata = finding.get('metadata', {})
-                        findings_str += f"{i}. Analyzed log page {metadata.get('page_number')} of {metadata.get('total_pages')}\n"
-                        if 'context' in finding:
-                            page_info = f"\n=== {finding['context']} ===\n"
-                    elif finding.get('type') == 'fetch_code':
-                        metadata = finding.get('metadata', {})
-                        findings_str += f"{i}. Analyzed code from {metadata.get('filename')}:{metadata.get('line_number')}\n"
-                    elif finding.get('type') == 'fetch_files':
-                        findings_str += f"{i}. File search: {finding.get('context', '')}\n"
-                    elif finding.get('type') == 'analyzed_pages':
-                        findings_str += f"{i}. {finding.get('result', '')}\n"
-                    elif 'error' in finding:
-                        findings_str += f"{i}. Error: {finding['error']}\n"
-
+                for k, v in findings.items():
+                    logger.info(f"Finding: {k} - {v}")
+                    findings_str += f"{k}: {v}\n"
+            
             prompt = f"""
 You are an expert system debugging assistant. Analyze this error and determine the next step.
 
-ERROR CONTEXT:{page_info}
+ERROR CONTEXT:
 {error_input}
 
 {findings_str}
@@ -269,10 +248,21 @@ Current Analysis State:
 {current_analysis if current_analysis else "No previous analysis"}
 
 Choose the appropriate tool to continue the investigation:
-1. fetch_files: Search for files containing specific patterns (provide array of search patterns)
-2. fetch_logs: Get a specific page of logs (provide page number)
-3. fetch_code: Get code from a specific file and line (provide filename and line number)
+1. fetch_files: Search for files containing specific patterns
+   - Use this tool with "search_patterns" parameter as an array of strings
+   - Example: {{"tool": "fetch_files", "params": {{"search_patterns": ["error", "exception"], "currentAnalysis": "..."}}}}
+
+2. fetch_logs: Get a specific page of logs
+   - Use this tool with "page_number" parameter
+   - Example: {{"tool": "fetch_logs", "params": {{"page_number": 2, "currentAnalysis": "..."}}}}
+
+3. fetch_code: Get code from a specific file and line
+   - Use this tool with "filename" and "line_number" parameters
+   - Example: {{"tool": "fetch_code", "params": {{"filename": "app.py", "line_number": 42, "currentAnalysis": "..."}}}}
+
 4. show_root_cause: If you have enough information to determine the root cause
+   - Use this tool with "root_cause" parameter
+   - Example: {{"tool": "show_root_cause", "params": {{"root_cause": "The error occurs because...", "currentAnalysis": "..."}}}}
 
 IMPORTANT INSTRUCTIONS:
 1. Maintain your analysis state in your response. Include key findings, hypotheses, and next steps.
